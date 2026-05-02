@@ -1,6 +1,12 @@
 {
-  "name": "v2",
+  "name": "entra-verified-id-v2",
   "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "shared-ui",
+    "frontend",
+    "admin/web"
+  ],
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
@@ -10,13 +16,14 @@
   "devDependencies": {
     "@types/jest": "^30",
     "@types/node": "^24.10.1",
+    "aws-cdk": "2.1120.0",
     "jest": "^30",
     "ts-jest": "^29",
-    "aws-cdk": "2.1120.0",
     "ts-node": "^10.9.2",
     "typescript": "~5.9.3"
   },
   "dependencies": {
+    "@aws-cdk/aws-lambda-python-alpha": "^2.251.0-alpha.0",
     "aws-cdk-lib": "^2.251.0",
     "constructs": "^10.5.0"
   }

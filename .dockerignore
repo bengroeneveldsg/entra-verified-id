@@ -1,0 +1,23 @@
+# Exclude heavy/sensitive dirs from Docker build context
+node_modules
+cdk.out
+.git
+.deploy.env
+cdk-outputs.json
+cdk.context.json
+*.md
+
+# Lambda functions not needed in container builds
+lambdas/
+layer/
+lib/
+bin/
+test/
+
+# Exclude other app's build artefacts
+frontend/node_modules
+frontend/dist
+admin/web/node_modules
+admin/web/dist
+shared-ui/node_modules
+shared-ui/dist
