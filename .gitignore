@@ -1,8 +1,47 @@
+# ── TypeScript build output ───────────────────────────────────────────────────
 *.js
 !jest.config.js
 *.d.ts
-node_modules
 
-# CDK asset staging directory
-.cdk.staging
-cdk.out
+# ── Dependencies ──────────────────────────────────────────────────────────────
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+.venv/
+venv/
+
+# ── CDK ───────────────────────────────────────────────────────────────────────
+.cdk.staging/
+cdk.out/
+
+# ── Deployment state — sensitive, never commit ────────────────────────────────
+.deploy.env
+cdk-outputs.json
+# cdk.context.json contains deployment-specific VPC/subnet IDs.
+# Operators should generate this via ./deploy.sh; do not commit.
+cdk.context.json
+
+# ── Frontend build output ─────────────────────────────────────────────────────
+frontend/dist/
+admin/web/dist/
+shared-ui/dist/
+
+# ── Claude Code — AI assistant files, not project code ───────────────────────
+CLAUDE.md
+.claude/
+
+# ── Test artefacts & scratch files ────────────────────────────────────────────
+*.test-output
+/tmp/
+
+# ── IDE / OS ──────────────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+Thumbs.db

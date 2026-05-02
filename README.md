@@ -1,14 +1,48 @@
-# Welcome to your CDK TypeScript project
+# Entra Verified ID — v2
 
-This is a blank project for CDK development with TypeScript.
+Passwordless QR-code authentication using Microsoft Entra Verified ID. Users authenticate by scanning a QR code with Microsoft Authenticator to present a VerifiedEmployee credential — no password required.
 
-The `cdk.json` file tells the CDK Toolkit how to execute your app.
+## What's Included
 
-## Useful commands
+- **Public login portal** — CloudFront + ECS Fargate serving a React/MUI SPA
+- **SAML Identity Provider** — replaces Entra for SAML-federated apps (AppStream, WorkSpaces, etc.)
+- **Credential issuance** — one-time flow to issue a VerifiedEmployee credential to a user's Authenticator
+- **Admin console** — VPN-only internal UI for managing SAML apps, signing keys, audit logs, and system config
+- **AWS CDK** — all infrastructure as code; single `./deploy.sh` deploys everything
 
-* `npm run build`   compile typescript to js
-* `npm run watch`   watch for changes and compile
-* `npm run test`    perform the jest unit tests
-* `npx cdk deploy`  deploy this stack to your default AWS account/region
-* `npx cdk diff`    compare deployed stack with current state
-* `npx cdk synth`   emits the synthesized CloudFormation template
+## Quick Start
+
+```bash
+cd v2
+./deploy.sh
+```
+
+The interactive script handles VPC/subnet selection, ACM cert creation, CDK bootstrap, and full stack deploy. After deploy it prints the admin console URL and one-time bootstrap credentials. Complete the onboarding wizard to configure your Entra tenant.
+
+## Architecture
+
+See [CLAUDE.md](./CLAUDE.md) for full technical documentation.
+
+## Stacks
+
+| Stack | Purpose |
+|---|---|
+| `EntraVid-Data-<stage>` | DynamoDB tables, Secrets Manager, S3 hosting bucket |
+| `EntraVid-Layers-<stage>` | Lambda layer (cryptography, lxml, powertools) |
+| `EntraVid-MainApp-<stage>` | Lambda functions + API Gateway |
+| `EntraVid-PublicFrontend-<stage>` | Public Fargate + CloudFront |
+| `EntraVid-Admin-<stage>` | Admin Fargate (VPN-only) |
+
+## Adding a SAML Application
+
+1. Upload the IdP metadata (admin console → SAML Apps → Download IdP Metadata) to AWS IAM as a SAML Provider
+2. Create an IAM Role trusting that provider
+3. Admin console → **SAML Applications → Add App**
+4. The tile appears automatically on the landing page
+
+## Key Technologies
+
+- **Infra**: AWS CDK (TypeScript), ECS Fargate, Lambda, API Gateway, DynamoDB, CloudFront
+- **Backend**: Python 3.12, FastAPI, AWS Lambda Powertools
+- **Frontend**: React 18, MUI v5, Vite
+- **Identity**: Microsoft Entra Verified ID REST API, SAML 2.0 (lxml + cryptography)

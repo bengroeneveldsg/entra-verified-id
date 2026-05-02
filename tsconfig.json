@@ -27,6 +27,9 @@
   },
   "exclude": [
     "node_modules",
-    "cdk.out"
+    "cdk.out",
+    "shared-ui",
+    "frontend",
+    "admin/web"
   ]
 }
