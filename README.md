@@ -27,27 +27,27 @@ A production-ready AWS deployment that enables **passwordless QR-code authentica
 | Feature | Description |
 |---|---|
 | **Credential issuance** | A user visits `/issue`, scans a QR code, and receives a VerifiedEmployee credential in Microsoft Authenticator |
-| **Standalone QR login** | Any application can use `/api/login/start` to challenge a user with a QR code and receive their verified claims |
-| **SAML IdP** | Replaces Entra as the identity provider for SAML-federated apps (AWS AppStream, WorkSpaces, etc.) — users scan a QR instead of entering a password |
+| **Standalone QR login** | Any application can call `/api/login/start` to challenge a user with a QR code and receive their verified claims |
+| **SAML IdP** | Replaces Entra as the identity provider for SAML-federated apps (AppStream, WorkSpaces, etc.) — users scan a QR instead of entering a password |
 | **Admin console** | A VPN-only internal web UI for managing SAML apps, signing keys, sessions, audit logs, and system configuration |
 
 ---
 
 ## How Verified ID works
 
-Microsoft Entra Verified ID is a cloud service that issues and verifies cryptographically signed digital credentials. It uses W3C Verifiable Credentials and Decentralised Identifiers (DIDs) but exposes everything through simple REST APIs.
+Microsoft Entra Verified ID is a cloud service that issues and verifies cryptographically signed digital credentials. It abstracts W3C Verifiable Credentials and Decentralised Identifiers (DIDs) behind simple REST APIs.
 
 ### Core concepts
 
 **Credential** — a signed JSON document stored in Microsoft Authenticator containing claims about the user (name, job title, department, email). Issued by your Entra tenant and cryptographically linked to the tenant's DID.
 
-**DID (Decentralised Identifier)** — a globally unique identifier for your organisation's identity authority, e.g. `did:web:verifiedid.entra.microsoft.com:tenant-id:did-id`. Used to verify that credentials came from a trusted source.
+**DID (Decentralised Identifier)** — a globally unique identifier for your organisation's identity authority, e.g. `did:web:verifiedid.entra.microsoft.com:tenant-id:did-id`. Used to verify that credentials were issued by a trusted source.
 
 **Presentation request** — your application asks the user to *prove* they hold a valid credential. The user scans a QR and presents the credential from their wallet. Your app receives the verified claims.
 
 **Issuance request** — your application asks Entra to *issue* a new credential to a user. The user scans a QR and the credential is written to their Authenticator wallet.
 
-### Microsoft-published constants (same in every Entra tenant)
+### Microsoft-published constants (same in every tenant globally)
 
 ```
 Verified ID service app ID:  3db474b9-6a0c-4840-96ac-1fceb342124f
@@ -62,7 +62,7 @@ Issuance API:                https://verifiedid.did.msidentity.com/v1.0/verifiab
 |---|---|
 | `authority` | Your organisation's DID |
 | `acceptedIssuers` | List of trusted issuer DIDs — credentials from other issuers are rejected |
-| `validateLinkedDomain: true` | Entra validates the DID against your domain's `.well-known/did-configuration.json` |
+| `validateLinkedDomain: true` | Entra validates the DID is linked to your domain via `.well-known/did-configuration.json` |
 | `allowRevoked: false` | Reject credentials that have been revoked by the issuer |
 
 ### VerifiedEmployee claims
@@ -75,40 +75,58 @@ The standard Entra `VerifiedEmployee` credential includes: `displayName`, `given
 
 ### Infrastructure overview
 
-```
-Internet users
-      │
-  CloudFront ──── *.yourdomain ACM cert (us-east-1)
-      │
-  Public ALB (internet-facing, public VPC subnets)
-      │
-  ECS Fargate ── Nginx ──────── proxy /api/* ──────▶ API Gateway
-  (public SPA)                                           │
-                                               6 Lambda functions
-                                                        │
-                                          DynamoDB + Secrets Manager + S3
+```mermaid
+flowchart TD
+    subgraph Public["Public Access"]
+        U([Internet Users])
+        CF[CloudFront\nACM cert us-east-1]
+        PALB[Public ALB\nInternet-facing]
+        FG[ECS Fargate\nNginx + React SPA]
+    end
 
-VPN users (10.0.0.0/8)
-      │
-  Internal ALB ── WAF (VPN CIDR allowlist)
-      │
-  ECS Fargate ── FastAPI ── React admin SPA
-  (admin console, private VPC)
+    subgraph API["API Layer"]
+        APIGW[API Gateway\nHTTP API]
+        L1[login_start\nlogin_callback\nlogin_status]
+        L2[issue_start\nissue_callback]
+        L3[saml_idp]
+    end
+
+    subgraph Data["Data Layer"]
+        DDB[(DynamoDB\n5 tables)]
+        SM[(Secrets Manager)]
+        S3[(S3\nhosting bucket)]
+    end
+
+    subgraph Admin["Admin Access VPN Only"]
+        VPN([VPN Users\n10.0.0.0/8])
+        WAF[WAF\nIP Allowlist]
+        AALB[Internal ALB\nPrivate VPC]
+        ADM[ECS Fargate\nFastAPI + React]
+    end
+
+    U --> CF --> PALB --> FG
+    FG -- "proxy /api/*" --> APIGW
+    APIGW --> L1 & L2 & L3
+    L1 & L2 & L3 --> DDB & SM
+    L3 --> S3
+
+    VPN --> WAF --> AALB --> ADM
+    ADM --> DDB & SM & S3
 ```
 
 ### CDK stacks
 
-All infrastructure is defined as AWS CDK TypeScript. Five stacks deploy in order:
+All infrastructure is defined as AWS CDK TypeScript. Five stacks deploy in dependency order:
 
 | Stack | Key Resources |
 |---|---|
 | `EntraVid-Data-{stage}` | 5 DynamoDB tables, 3 Secrets Manager secrets, S3 hosting bucket |
 | `EntraVid-Layers-{stage}` | Lambda layer: cryptography + lxml + aws-lambda-powertools |
 | `EntraVid-MainApp-{stage}` | 6 Lambda functions + API Gateway HTTP API |
-| `EntraVid-PublicFrontend-{stage}` | ECS Fargate service, internet-facing ALB, CloudFront distribution |
-| `EntraVid-Admin-{stage}` | ECS Fargate service, internal ALB, WAF |
+| `EntraVid-PublicFrontend-{stage}` | ECS Fargate, internet-facing ALB, CloudFront distribution |
+| `EntraVid-Admin-{stage}` | ECS Fargate, internal ALB, WAF |
 
-**No networking resources are created by CDK.** All VPCs, subnets, NAT gateways, and VPC endpoints must be pre-existing. Operators provide VPC and subnet IDs as deploy-time context.
+> **No networking resources are created by CDK.** All VPCs, subnets, NAT gateways, and routing must be pre-existing. Operators supply VPC and subnet IDs as deploy-time context parameters.
 
 ### Lambda functions
 
@@ -116,79 +134,310 @@ All infrastructure is defined as AWS CDK TypeScript. Five stacks deploy in order
 |---|---|---|
 | `login_start` | `POST /api/login/start` | Creates a VID presentation request; returns QR code + requestId |
 | `login_callback` | `POST /api/login/callback` | Entra VID webhook — stores verified claims in DynamoDB |
-| `login_status` | `GET /api/login/status/{requestId}` | Frontend polls this for verification result |
+| `login_status` | `GET /api/login/status/{requestId}` | Frontend polls this for the verification result |
 | `issue_start` | `POST /api/issue/start` | Creates a VID issuance request; returns QR code + requestId |
-| `issue_callback` | `POST /api/issue/callback` | Entra VID webhook — records issuance success/failure |
+| `issue_callback` | `POST /api/issue/callback` | Entra VID webhook — records issuance success or failure |
 | `saml_idp` | `GET\|POST /api/saml/*` | SAML 2.0 IdP: metadata, SSO, initiate, complete, app list |
 
 ---
 
 ## Prerequisites
 
-- **AWS CLI v2** with SSO configured
-- **Node.js 20+** and npm
-- **Docker** (for building container images and Lambda layers)
-- **`jq`**
-- **Existing VPC(s)** — one public VPC with ≥2 public subnets and one private VPC with ≥2 private subnets. Both must be in the deployment region with appropriate routing already configured.
-- **ACM certificate** — wildcard cert for your domain in `us-east-1` (for CloudFront). A regional cert for ALB HTTPS is optional.
-- **Entra tenant** with Verified ID enabled (see Entra setup below)
+### Required tools
 
-### Entra setup
+| Tool | Purpose | Notes |
+|---|---|---|
+| AWS CLI v2 | All AWS operations | Must be configured with credentials (see [Deploying](#deploying)) |
+| Node.js 20+ | CDK execution | Install via [nodejs.org](https://nodejs.org) |
+| npm 9+ | Package management | Bundled with Node.js |
+| Docker | Build container images and Lambda layers | Required for full deployments. Not required for Lambda-only CDK updates. |
+| `jq` | Used by `deploy.sh` | `apt install jq` / `brew install jq` |
 
-Create two app registrations in your Entra tenant:
+### Required AWS resources (pre-existing)
 
-**IssuerVerifier app** — used to call the Verified ID REST API:
-- API permissions: `VerifiableCredential.Create.All` (Application, admin-consented)
-- Create a client secret; note the Application (client) ID
+| Resource | Requirement |
+|---|---|
+| VPC (public) | ≥ 2 public subnets in different AZs, internet gateway, routing to internet |
+| VPC (private) | ≥ 2 private subnets in different AZs, outbound connectivity for ECS (NAT or VPC endpoints) |
+| ACM certificate | Wildcard cert for your domain in `us-east-1` (for CloudFront). Regional cert optional for ALB HTTPS. |
 
-Enable Verified ID in your tenant:
-1. Azure Portal → Entra ID → Verified ID → Get started
-2. Note your **DID authority** (e.g. `did:web:verifiedid.entra.microsoft.com:tenant-id:did-id`)
-3. Note your **VerifiedEmployee manifest URL** from the credential contract
+### Required Entra configuration
+
+Complete the following steps in the **Azure Portal** before running `deploy.sh`. The values collected here are entered into the onboarding wizard after deployment.
+
+---
+
+#### Step 1 — Enable Verified ID
+
+1. Sign in to [portal.azure.com](https://portal.azure.com) as a Global Administrator
+2. Navigate to **Entra ID → Verified ID → Get started**
+3. Follow the quick setup wizard — select **Microsoft-managed** for the DID (recommended)
+4. After setup completes, go to **Verified ID → Overview** and note:
+   - **Authority (DID)** — e.g. `did:web:verifiedid.entra.microsoft.com:260c418f...:3bc8e7d0...`
+   - This is your DID authority — required in the wizard
+
+---
+
+#### Step 2 — Create the VerifiedEmployee credential type
+
+If your tenant does not already have a VerifiedEmployee credential contract:
+
+1. **Verified ID → Credentials → Add credential**
+2. Select **VerifiedEmployee** from the template gallery
+3. Configure display settings and claims mapping to your directory attributes
+4. After creation, go to the credential and note the **Manifest URL** — e.g.:
+   `https://verifiedid.did.msidentity.com/v1.0/tenants/{tenantId}/verifiableCredentials/contracts/{contractId}/manifest`
+
+---
+
+#### Step 3 — Create the IssuerVerifier app registration
+
+This app registration is used by the Lambda functions to call the Verified ID REST API.
+
+1. **Entra ID → App registrations → New registration**
+   - Name: `VerifiedID-IssuerVerifier` (or your preferred name)
+   - Supported account types: Accounts in this organisational directory only
+   - No redirect URI required
+2. After creation, note the **Application (client) ID** — this is your `clientId`
+3. **Certificates & secrets → Client secrets → New client secret**
+   - Set an expiry (12 or 24 months)
+   - Copy the **Value** immediately — it is only shown once. This is your `clientSecret`
+4. **API permissions → Add a permission → APIs my organisation uses**
+   - Search for `Verifiable Credential`
+   - Select **Verifiable Credentials Service Request**
+   - Add application permission: `VerifiableCredential.Create.All`
+5. **Grant admin consent** — click **Grant admin consent for {organisation}** and confirm
+
+> The `VerifiableCredential.Create.All` permission with admin consent is required for the Lambda functions to create presentation and issuance requests on behalf of your tenant.
+
+---
+
+#### Step 4 — Note your tenant ID
+
+1. **Entra ID → Overview**
+2. Copy the **Directory (tenant) ID** — a UUID in the format `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
+
+---
+
+#### Entra configuration summary
+
+Collect these values before running the onboarding wizard:
+
+| Value | Where to find it |
+|---|---|
+| Tenant ID | Entra ID → Overview → Directory (tenant) ID |
+| IssuerVerifier Client ID | App registration → Overview → Application (client) ID |
+| IssuerVerifier Client Secret | App registration → Certificates & secrets |
+| DID Authority | Verified ID → Overview → Authority |
+| Manifest URL | Verified ID → Credentials → your credential → Manifest URL |
+| Accepted Issuer DID | Same as DID Authority (for same-tenant issuance) |
 
 ---
 
 ## Deploying
 
-### First-time deployment
+### Required IAM permissions
+
+The AWS identity deploying the stacks needs the following permissions. The easiest approach is `AdministratorAccess` for the initial deploy, then scope down for updates.
+
+For a scoped deploy policy, the minimum required service actions are:
+
+```
+cloudformation:*
+ecr:*
+ecs:*
+lambda:*
+iam:CreateRole, iam:AttachRolePolicy, iam:PutRolePolicy, iam:PassRole,
+    iam:GetRole, iam:DeleteRole, iam:DetachRolePolicy
+ec2:DescribeVpcs, ec2:DescribeSubnets, ec2:CreateSecurityGroup,
+    ec2:AuthorizeSecurityGroupIngress, ec2:DescribeSecurityGroups
+elasticloadbalancing:*
+cloudfront:*
+dynamodb:CreateTable, dynamodb:DescribeTable, dynamodb:DeleteTable,
+    dynamodb:UpdateTable, dynamodb:TagResource
+secretsmanager:CreateSecret, secretsmanager:GetSecretValue,
+    secretsmanager:PutSecretValue, secretsmanager:UpdateSecret
+s3:CreateBucket, s3:PutBucketPolicy, s3:PutObject, s3:GetObject
+acm:RequestCertificate, acm:DescribeCertificate, acm:ListCertificates
+route53:ChangeResourceRecordSets, route53:ListHostedZones
+wafv2:CreateWebACL, wafv2:CreateIPSet, wafv2:AssociateWebACL
+logs:CreateLogGroup, logs:PutRetentionPolicy
+ssm:GetParameter (CDK bootstrap)
+```
+
+---
+
+### Option 1 — Local machine with AWS SSO
+
+Use this if your organisation uses AWS SSO (IAM Identity Center).
+
+```bash
+# Log in
+aws sso login --profile <your-profile>
+
+# Verify
+aws sts get-caller-identity --profile <your-profile>
+
+# Deploy
+cd v2
+./deploy.sh
+# Select your SSO profile when prompted
+```
+
+---
+
+### Option 2 — Local machine with IAM user credentials
+
+Use this if you have a long-lived IAM user with access keys.
+
+```bash
+# Configure credentials
+aws configure --profile deploy-user
+# Enter: Access Key ID, Secret Access Key, region, output format
+
+# Verify
+aws sts get-caller-identity --profile deploy-user
+
+# Set environment and deploy
+export AWS_PROFILE=deploy-user
+cd v2
+./deploy.sh
+```
+
+Or use environment variables directly (useful in scripts):
+
+```bash
+export AWS_ACCESS_KEY_ID=AKIA...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_DEFAULT_REGION=ap-southeast-1
+
+cd v2
+./deploy.sh
+```
+
+---
+
+### Option 3 — Local machine with IAM role assumption
+
+Use this if you need to assume a deployment role (common in multi-account setups).
+
+```bash
+# Add to ~/.aws/config
+[profile deploy-role]
+role_arn = arn:aws:iam::123456789012:role/DeploymentRole
+source_profile = default   # or another profile with sts:AssumeRole permission
+region = ap-southeast-1
+
+# Verify role assumption
+aws sts get-caller-identity --profile deploy-role
+
+# Deploy
+export AWS_PROFILE=deploy-role
+cd v2
+./deploy.sh
+```
+
+---
+
+### Option 4 — AWS CloudShell
+
+> **Note:** CloudShell does not have Docker available. Use CloudShell for **CDK-only changes** (updating Lambda code, modifying stack config). For full deployments that build Docker images (first deploy, admin console changes, frontend changes), use a local machine or EC2 instead.
+
+CloudShell already has AWS CLI and Node.js. You only need to install CDK:
+
+```bash
+# In CloudShell — install Node.js 20 and CDK
+curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+sudo yum install -y nodejs
+npm install -g aws-cdk
+
+# Clone the repo
+git clone https://github.com/your-org/entra-verified-id.git
+cd entra-verified-id/v2
+npm install
+
+# For Lambda-only or config-only changes (no Docker required)
+export CDK_DEFAULT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+export CDK_DEFAULT_REGION=$AWS_DEFAULT_REGION
+
+npx cdk deploy "EntraVid-MainApp-v2" --require-approval never
+```
+
+CloudShell credentials are automatically available — no configuration needed.
+
+---
+
+### Option 5 — EC2 instance (recommended for CI/CD or team pipelines)
+
+An EC2 instance with an IAM instance profile is the cleanest approach for automated deployments.
+
+```bash
+# On an EC2 instance with appropriate instance profile
+# Install prerequisites
+sudo yum update -y
+curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+sudo yum install -y nodejs docker git jq
+sudo systemctl start docker
+sudo usermod -aG docker ec2-user
+sudo npm install -g aws-cdk
+newgrp docker
+
+# Clone and deploy
+git clone https://github.com/your-org/entra-verified-id.git
+cd entra-verified-id/v2
+npm install
+
+export CDK_DEFAULT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+export CDK_DEFAULT_REGION=ap-southeast-1
+
+./deploy.sh --non-interactive   # uses .deploy.env for all parameters
+```
+
+---
+
+### First-time deployment (any option)
+
+Once authenticated, run:
 
 ```bash
 cd v2
 ./deploy.sh
 ```
 
-The interactive script guides you through:
-1. AWS profile and region selection
-2. VPC and subnet selection (queries your account; presents a numbered list)
-3. VPN CIDR configuration
-4. Domain name entry
-5. ACM certificate selection or creation (with automatic DNS validation via Route 53)
-6. CDK bootstrap (if needed)
-7. All 5 stacks deployed in dependency order
-8. Post-deploy: admin URL, CloudFront URL, and one-time bootstrap credentials printed
+The script guides you through:
 
-All parameters are saved to `.deploy.env` (gitignored) — re-runs use saved values as defaults.
+1. **Credential verification** — confirms your AWS identity before proceeding
+2. **VPC selection** — queries your account and presents a numbered list of VPCs and subnets
+3. **VPN CIDR** — the IP range allowed to reach the admin console
+4. **Domain** — your public-facing domain (e.g. `vid.yourdomain.com`)
+5. **ACM certificates** — select existing or create new DNS-validated certificates
+6. **CDK bootstrap** — runs automatically if not already bootstrapped in the account/region
+7. **Stack deployment** — all 5 stacks deployed in dependency order with progress output
+8. **Post-deploy summary** — prints public URL, admin URL, and one-time bootstrap credentials
+
+All parameters are saved to `.deploy.env` (gitignored) — subsequent runs use saved values as defaults.
 
 ### After the first deploy
 
-Access the admin console from your VPN and complete the **onboarding wizard**. The wizard collects your Entra tenant credentials, DID, domain settings, and generates signing keys. The system is not functional until the wizard is completed.
+Access the admin console from your VPN and complete the **onboarding wizard** (see [Admin Console](#admin-console)). The system is not functional until the wizard is completed — it collects your Entra tenant credentials, DID, domain settings, and generates signing keys.
 
 ### Re-deploying after changes
 
 ```bash
-export AWS_PROFILE=<profile>
+# Set account and region
 export CDK_DEFAULT_ACCOUNT=<account-id>
-export CDK_DEFAULT_REGION=<region>
+export CDK_DEFAULT_REGION=ap-southeast-1
+# Plus your credential method (profile / env vars / instance role)
 
-# Lambda or CDK-only changes (fast, no Docker rebuild)
+# Lambda code changes only (fast, no Docker build needed)
 npx cdk deploy "EntraVid-MainApp-v2" --require-approval never
 
-# Admin console changes
-docker build -f admin/Dockerfile -t entra-vid-admin . && \
+# Admin console changes (requires Docker)
+docker build -f admin/Dockerfile -t entra-vid-admin .
 npx cdk deploy "EntraVid-Admin-v2" --require-approval never
 
-# Public frontend changes
-docker build -f frontend/Dockerfile -t entra-vid-frontend . && \
+# Public frontend changes (requires Docker)
+docker build -f frontend/Dockerfile -t entra-vid-frontend .
 npx cdk deploy "EntraVid-PublicFrontend-v2" --require-approval never
 
 # All stacks
@@ -201,7 +450,7 @@ npx cdk deploy --all --require-approval never
 
 ### Architecture
 
-Configuration is split across two AWS services — **never hardcoded in code**:
+Configuration is split across two AWS services — **never hardcoded**:
 
 | Store | Contents |
 |---|---|
@@ -212,7 +461,7 @@ Lambda functions load both at cold start and cache for 5 minutes. The admin cons
 
 ### Configuration keys reference
 
-All written automatically by the onboarding wizard:
+All keys are written automatically by the onboarding wizard:
 
 | Key | Store | Description |
 |---|---|---|
@@ -231,7 +480,7 @@ All written automatically by the onboarding wizard:
 | `kid` | Config | Active signing key ID |
 | `clientId` | Secret | IssuerVerifier app client ID |
 | `clientSecret` | Secret | IssuerVerifier app client secret |
-| `callbackSecret` | Secret | Webhook API key — auto-generated, 32 bytes |
+| `callbackSecret` | Secret | Webhook API key — auto-generated 32-byte random value |
 | `eamSigningKey` | Secret | RSA-2048 private key PEM |
 | `eamKid` | Secret | Signing key ID |
 
@@ -239,54 +488,82 @@ All written automatically by the onboarding wizard:
 
 ## Authentication flows
 
-### Presentation flow (login / SAML)
+### Presentation flow (QR login / SAML authentication)
 
-```
-1.  POST /api/login/start
-    Lambda acquires OAuth token (client_credentials, scope 3db474b9.../.default)
-    Lambda calls Entra VID createPresentationRequest
-    Entra returns: requestId, QR code (base64 PNG), deep-link URL
-    Lambda stores pending session in DynamoDB (TTL 10 min)
-    Returns QR + requestId to frontend
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant L as Lambda
+    participant E as Entra VID
+    participant A as Authenticator
 
-2.  Frontend displays QR; polls GET /api/login/status/{requestId} every 2 seconds
+    B->>L: POST /api/login/start
+    L->>E: createPresentationRequest (client_credentials token)
+    E-->>L: requestId + QR code + deep-link URL
+    L->>L: Store pending session in DynamoDB (TTL 10 min)
+    L-->>B: requestId + QR code
 
-3.  User scans QR with Microsoft Authenticator
-    Authenticator contacts Entra VID service directly
-    User selects and presents their VerifiedEmployee credential
+    loop Poll every 2 seconds
+        B->>L: GET /api/login/status/{requestId}
+        L-->>B: {status: "pending"}
+    end
 
-4.  Entra VID calls POST /api/login/callback (webhook)
-    Lambda validates x-api-key (constant-time comparison)
-    Lambda validates requestId against DynamoDB
-    presentation_verified: stores claims, pending → success
-    presentation_error:    pending → failed
+    B->>B: Display QR code
+    A->>E: Scan QR → present VerifiedEmployee credential
+    E->>L: POST /api/login/callback (webhook, x-api-key validated)
+    L->>L: Validate state, store claims → pending → success
 
-5.  Frontend poll gets status=success
-    Lambda atomically transitions success → claimed (prevents double-issue)
-    Returns verified claims: displayName, mail, jobTitle, etc.
-```
-
-### Issuance flow
-
-```
-1.  POST /api/issue/start
-    Lambda calls Entra VID createIssuanceRequest
-    Returns QR + requestId
-
-2.  User scans QR with Authenticator
-    Authenticator authenticates against Entra
-    Credential written to Authenticator wallet
-
-3.  Entra VID calls POST /api/issue/callback twice:
-    request_retrieved:    user scanned — show "scanning…" UI
-    issuance_successful:  credential issued — show success screen
+    B->>L: GET /api/login/status/{requestId}
+    L->>L: Atomic transition success → claimed
+    L-->>B: {status: "success", claims: {displayName, mail, ...}}
 ```
 
-### Session status transitions
+### Issuance flow (credential enrolment)
 
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant L as Lambda
+    participant E as Entra VID
+    participant A as Authenticator
+
+    B->>L: POST /api/issue/start
+    L->>E: createIssuanceRequest (client_credentials token)
+    E-->>L: requestId + QR code
+    L-->>B: requestId + QR code
+    B->>B: Display QR code
+
+    A->>E: Scan QR → authenticate against Entra tenant
+    E->>L: POST /api/issue/callback (requestStatus: request_retrieved)
+    L->>L: Update status → request_retrieved
+
+    loop Poll
+        B->>L: GET /api/login/status/{requestId}
+        L-->>B: {status: "request_retrieved"}
+    end
+
+    E->>A: Issue VerifiedEmployee credential to wallet
+    E->>L: POST /api/issue/callback (requestStatus: issuance_successful)
+    L->>L: Update status → issuance_successful
+
+    B->>L: GET /api/login/status/{requestId}
+    L-->>B: {status: "issuance_successful"}
+    B->>B: Show success screen
 ```
-pending → request_retrieved → success → claimed   (happy path)
-pending → failed                                   (verification failed)
+
+### Session state machine
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> pending : Request created
+    pending --> request_retrieved : User scanned QR
+    request_retrieved --> success : Credential verified
+    request_retrieved --> failed : Verification error
+    success --> claimed : Claims returned to app
+    pending --> failed : Timeout / error
+    claimed --> [*]
+    failed --> [*]
 ```
 
 ---
@@ -295,57 +572,70 @@ pending → failed                                   (verification failed)
 
 ### Flow
 
-```
-SP sends AuthnRequest (HTTP-Redirect or HTTP-POST binding)
-    │
-    ▼  GET /api/saml/sso
-Lambda parses AuthnRequest, creates SAML session in DynamoDB
-    │
-    ▼  Redirect to {frontend}/saml?session={id}
-Frontend shows QR code (calls /api/login/start internally)
-    │
-    ▼  User scans, credential verified via standard presentation flow
-Frontend calls GET /api/saml/complete?session={id}&vid={requestId}
-    │
-    ▼  Lambda builds signed SAML assertion (lxml + RSA-PKCS1v15 + exclusive C14N)
-Browser auto-POSTs SAMLResponse to SP ACS URL
-    │
-    ▼  SP grants access
+```mermaid
+sequenceDiagram
+    participant SP as Service Provider\n(AppStream etc.)
+    participant L as Lambda (saml_idp)
+    participant B as Browser
+    participant VID as VID Flow
+
+    SP->>L: GET /api/saml/sso?SAMLRequest=...
+    L->>L: Parse AuthnRequest\nCreate SAML session in DynamoDB
+    L-->>B: Redirect to /saml?session={id}
+
+    B->>VID: Standard presentation flow\n(QR scan → credential verified)
+    VID-->>B: VID requestId confirmed
+
+    B->>L: GET /api/saml/complete?session={id}&vid={requestId}
+    L->>L: Build signed SAML assertion\n(RSA-PKCS1v15 + SHA-256 + exclusive C14N)
+    L-->>B: {samlResponse, acsUrl, relayState}
+
+    B->>SP: Auto-POST SAMLResponse to ACS URL
+    SP-->>B: Grant access / redirect to app
 ```
 
-For landing-page initiated flows (no SP redirect), `/api/saml/initiate?app={appId}` creates the session directly.
+For landing-page initiated flows (no SP redirect), the browser calls `/api/saml/initiate?app={appId}` to create the session without an `AuthnRequest`.
 
 ### Adding a SAML application
 
-**Step 1** — Upload IdP metadata to AWS IAM (one-time, shared across all apps):
+**Step 1 — Create the IAM SAML provider** (one per deployment, shared across all apps)
+
 1. Admin console → SAML Applications → **Download IdP Metadata**
 2. AWS IAM Console → Identity providers → Add provider → SAML → upload the XML
 3. Note the provider ARN: `arn:aws:iam::{account}:saml-provider/{name}`
 
-**Step 2** — Create an IAM role:
+**Step 2 — Create an IAM role with the following trust policy:**
 
 ```json
 {
   "Effect": "Allow",
-  "Principal": { "Federated": "arn:aws:iam::{account}:saml-provider/{name}" },
+  "Principal": {
+    "Federated": "arn:aws:iam::{account}:saml-provider/{name}"
+  },
   "Action": "sts:AssumeRoleWithSAML",
   "Condition": {
-    "StringEquals": { "SAML:aud": "https://signin.aws.amazon.com/saml" }
+    "StringEquals": {
+      "SAML:aud": "https://signin.aws.amazon.com/saml"
+    }
   }
 }
 ```
 
-**Step 3** — Admin console → SAML Applications → Add App.
+**Step 3 — Add the app in the admin console**
 
-The app tile appears on the public landing page immediately after saving.
+Admin console → SAML Applications → Add App. The app tile appears on the public landing page immediately.
 
-> **Key rotation**: After rotating signing keys, re-upload the IdP metadata to your IAM SAML provider. The old certificate will no longer be trusted.
+> **After key rotation:** Re-download IdP metadata and re-upload to your IAM SAML provider. The old certificate will no longer be valid for signature verification.
 
 ---
 
 ## Admin Console
 
-Accessible from VPN only. URL is printed by `deploy.sh`.
+Accessible from VPN only (WAF blocks all other traffic). URL is printed by `deploy.sh` after deployment.
+
+### Onboarding wizard
+
+Run once on first access. Six steps collect all required configuration. Progress is saved between steps. The wizard locks permanently after completion — use System Config for post-setup edits.
 
 ### Pages
 
@@ -353,14 +643,10 @@ Accessible from VPN only. URL is printed by `deploy.sh`.
 |---|---|
 | **Dashboard** | System status, SAML app count, active sessions, signing key age, recent audit events |
 | **SAML Applications** | Add/edit/disable apps; download IdP metadata; copy metadata URL |
-| **Sessions** | Active in-flight VID sessions (users currently mid-authentication); revoke stuck sessions |
-| **Signing Keys** | Current key ID, JWKS URL, rotation (grace window keeps old key active) |
-| **System Config** | All configuration values grouped by category; inline editing for non-secret, non-read-only keys |
-| **Audit Log** | Admin action audit trail + container runtime logs (health checks and lifecycle events filtered) |
-
-### Onboarding wizard
-
-Run once on first access. Six steps collect all required configuration. Progress is saved between steps — close the browser and resume later. The wizard is permanently locked after completion; use System Config for post-setup changes.
+| **Sessions** | Active in-flight VID sessions (users mid-authentication); revoke stuck sessions |
+| **Signing Keys** | Current key ID, JWKS URL, key rotation (grace window keeps old key valid) |
+| **System Config** | All configuration grouped by category; inline editing for editable keys |
+| **Audit Log** | Admin action trail + container runtime logs (health checks filtered) |
 
 ---
 
@@ -368,10 +654,9 @@ Run once on first access. Six steps collect all required configuration. Progress
 
 ### What is signed
 
-- **SAML assertions** — every SAML response is signed with the RSA private key
-- The public key is exposed in the JWKS at `/.well-known/jwks.json` and in IdP metadata
+Every SAML assertion is signed with an RSA-2048 private key. The corresponding public certificate is published in the JWKS and in the IdP metadata that SPs use to verify signatures.
 
-### Storage
+### Key storage
 
 | Item | Location |
 |---|---|
@@ -384,7 +669,7 @@ Run once on first access. Six steps collect all required configuration. Progress
 
 Admin console → Signing Keys → **Rotate Keys**.
 
-A new RSA-2048 keypair is generated. The JWKS is updated with **both old and new keys** during a grace window — existing in-flight SAML sessions remain valid. After rotation, download fresh IdP metadata and update your IAM SAML provider.
+A new RSA-2048 keypair is generated. The JWKS is updated with **both old and new keys** during a grace window so existing sessions remain valid. After rotation, download fresh IdP metadata from the admin console and re-upload to your AWS IAM SAML provider.
 
 ---
 
@@ -392,28 +677,28 @@ A new RSA-2048 keypair is generated. The JWKS is updated with **both old and new
 
 ### Webhook authentication
 
-All Entra VID callbacks authenticate via the `x-api-key` header. The `callbackSecret` is validated with **constant-time comparison** to prevent timing attacks. Generated automatically during setup (32 bytes, URL-safe base64).
+All Entra VID callbacks include an `x-api-key` header. The `callbackSecret` is validated using **constant-time comparison** to prevent timing attacks. Auto-generated during setup (32 bytes, URL-safe base64).
 
-### Admin authentication
+### Admin console authentication
 
-- **Argon2id** password hashing
-- **TOTP MFA** enforced after first login
-- **JWT cookies** — `HttpOnly`, `SameSite=Lax`; `Secure` flag enabled when HTTPS is configured
-- **Brute force** — 5 failed attempts → 15-minute account lock
-- **Network** — internal ALB + WAF IP allowlist (VPN CIDR); no public path exists
+- **Argon2id** password hashing (memory-hard, GPU-resistant)
+- **TOTP MFA** enforced after initial password change
+- **JWT cookies** — `HttpOnly`, `SameSite=Lax`; `Secure` flag when HTTPS is configured
+- **Brute force protection** — 5 failed attempts → 15-minute account lock
+- **Network** — internal ALB + WAF IP allowlist; no public path exists
 
 ### Lambda IAM (least privilege)
 
-Lambdas share one IAM role with:
-- DynamoDB: `GetItem`, `PutItem`, `UpdateItem`, `Query` on specific table ARNs only
+Lambdas share a single IAM role scoped to:
+- DynamoDB: `GetItem`, `PutItem`, `UpdateItem`, `Query` on specific table ARNs
 - Secrets Manager: `GetSecretValue` on the app secret ARN only
 - S3: `GetObject` on the hosting bucket (for SAML signing certificate)
 
 ### SAML XML signing
 
-- Algorithm: RSA-PKCS1v15 + SHA-256
-- Canonicalisation: exclusive C14N via `lxml` (`transform_uri = "http://www.w3.org/2001/10/xml-exc-c14n#"`)
-- ACS URL: always read from DynamoDB config — never taken from the `AuthnRequest`
+- **Algorithm:** RSA-PKCS1v15 + SHA-256
+- **Canonicalisation:** Exclusive C14N via `lxml`
+- **ACS URL:** always read from DynamoDB — never taken from the incoming `AuthnRequest`
 
 ---
 
@@ -422,64 +707,67 @@ Lambdas share one IAM role with:
 ### Local setup
 
 ```bash
-npm install                    # CDK + workspace dependencies
+npm install                     # Install CDK and workspace dependencies
 
-# Admin backend (Python)
-cd admin && pip install -e ".[dev]"
+# Admin backend
+cd admin
+pip install -e ".[dev]"
 uvicorn app.main:app --reload --port 8000
 
-# Admin SPA
-cd admin/web && npm run dev    # http://localhost:3001
+# Admin SPA (runs on http://localhost:3001)
+cd admin/web && npm run dev
 
-# Public frontend
-cd frontend && npm run dev     # http://localhost:5173
+# Public frontend (runs on http://localhost:5173)
+cd frontend && npm run dev
 ```
 
-### TypeScript checks
+### Validate CDK without deploying
+
+```bash
+export CDK_DEFAULT_ACCOUNT=<account-id>
+export CDK_DEFAULT_REGION=<region>
+npx cdk synth --quiet
+```
+
+### TypeScript check
 
 ```bash
 npx tsc --noEmit
 ```
 
-### CDK synth (validate without deploying)
-
-```bash
-AWS_PROFILE=<profile> CDK_DEFAULT_ACCOUNT=<account> CDK_DEFAULT_REGION=<region> \
-  npx cdk synth --quiet
-```
-
 ### Lambda shared helpers
 
 - `lambdas/shared/config.py` — reads SystemConfig from DynamoDB with 5-minute in-memory cache
-- `lambdas/shared/secrets.py` — reads Secrets Manager with 5-minute cache; tries the Parameters & Secrets Lambda Extension first (faster), falls back to direct boto3
+- `lambdas/shared/secrets.py` — reads Secrets Manager with 5-minute cache; tries the Parameters and Secrets Lambda Extension first, falls back to direct boto3
 
 ---
 
 ## Troubleshooting
 
 ### "Could not start sign-in" on SAML flow
-- Check the `/api/saml/initiate` route is registered in API Gateway (should be in `main-app-stack.ts`)
-- Verify the Lambda role has `s3:GetObject` on the hosting bucket — needed to read the signing certificate
+- Verify `/api/saml/initiate` is registered as an API Gateway route in `main-app-stack.ts`
+- Confirm the Lambda IAM role has `s3:GetObject` on the hosting bucket (needed to read the signing certificate from S3)
 
-### SAML signature fails at the SP
-- The signing certificate changed after a key rotation. Re-download IdP metadata from the admin console and re-upload to your IAM SAML provider.
+### SAML signature verification fails at the SP
+- Key rotation changed the signing certificate. Re-download IdP metadata from the admin console and re-upload to your AWS IAM SAML provider.
 
 ### Admin console login signs out immediately
-- `SECURE_COOKIE=true` but the admin ALB is HTTP-only. Set `SECURE_COOKIE=false` in the container environment (CDK: set `hasCustomDomain = false`).
+- `SECURE_COOKIE=true` but the admin ALB is HTTP-only. Ensure `SECURE_COOKIE=false` is set in the ECS container environment (controlled by `hasCustomDomain` in `admin-stack.ts`).
 
 ### "System configuration not initialised" from Lambdas
-- The onboarding wizard was not completed. Access the admin console and finish all wizard steps.
-- Verify `onboarding_complete = true` exists in `EntraVerifiedIDSystemConfig-{stage}` DynamoDB.
+- The onboarding wizard has not been completed. Open the admin console and run through all steps.
+- Verify `onboarding_complete = true` exists in the `EntraVerifiedIDSystemConfig-{stage}` DynamoDB table.
 
-### SAML metadata download fails (503)
-- The S3 hosting bucket JWKS has not been uploaded yet (wizard keys step not completed).
-- Check the Lambda has `s3:GetObject` permission on `.well-known/jwks.json`.
+### SAML metadata download returns 503
+- The signing key wizard step was not completed — no JWKS file exists in S3.
+- Confirm the Lambda has `s3:GetObject` permission on `.well-known/jwks.json` in the hosting bucket.
 
 ### API calls return 403 from CloudFront
-- Nginx is forwarding `Host: {your-domain}` to API Gateway (which doesn't know that hostname). Nginx config must use `proxy_set_header Host $proxy_host;` not `$http_host`.
+- Nginx is forwarding `Host: {your-domain}` to API Gateway (which doesn't recognise that hostname).
+- The Nginx proxy config must use `proxy_set_header Host $proxy_host;` not `$http_host`.
 
-### Admin audit log shows 500
-- The admin task role needs `dynamodb:Query` permission. Check `tables.auditLog.grantReadWriteData(taskRole)` in `admin-stack.ts`.
+### Admin audit log page returns 500
+- The admin ECS task role is missing `dynamodb:Query`. Confirm `tables.auditLog.grantReadWriteData(taskRole)` is present in `admin-stack.ts`.
 
 ---
 
@@ -487,29 +775,29 @@ AWS_PROFILE=<profile> CDK_DEFAULT_ACCOUNT=<account> CDK_DEFAULT_REGION=<region> 
 
 ```
 v2/
-├── bin/app.ts                   CDK entry point — context-driven, no hardcoded values
+├── bin/app.ts                    CDK entry — context-driven, zero hardcoded values
 ├── lib/
-│   ├── data-stack.ts            DynamoDB tables, Secrets Manager, S3
-│   ├── layers-stack.ts          Lambda dependency layer (Docker build)
-│   ├── main-app-stack.ts        Lambda functions + API Gateway routes
-│   ├── public-frontend-stack.ts ECS Fargate + internet ALB + CloudFront
-│   └── admin-stack.ts           Admin ECS Fargate + internal ALB + WAF
+│   ├── data-stack.ts             DynamoDB, Secrets Manager, S3
+│   ├── layers-stack.ts           Lambda layer (Docker build)
+│   ├── main-app-stack.ts         Lambda functions + API Gateway routes
+│   ├── public-frontend-stack.ts  ECS Fargate + internet ALB + CloudFront
+│   └── admin-stack.ts            Admin ECS Fargate + internal ALB + WAF
 ├── lambdas/
-│   ├── shared/                  config.py, secrets.py (TTL-cached helpers)
-│   ├── login_start/             Presentation request creation
-│   ├── login_callback/          Presentation webhook receiver
-│   ├── login_status/            Status polling endpoint
-│   ├── issue_start/             Issuance request creation
-│   ├── issue_callback/          Issuance webhook receiver
-│   └── saml_idp/                SAML 2.0 IdP (metadata, SSO, initiate, complete)
+│   ├── shared/                   config.py + secrets.py (TTL-cached)
+│   ├── login_start/              Presentation request creation
+│   ├── login_callback/           Presentation webhook receiver
+│   ├── login_status/             Status polling endpoint
+│   ├── issue_start/              Issuance request creation
+│   ├── issue_callback/           Issuance webhook receiver
+│   └── saml_idp/                 SAML 2.0 IdP
 ├── frontend/
-│   ├── src/pages/               Landing, Login, Issue, Saml
-│   └── nginx.conf               API proxy + health endpoint
+│   ├── src/pages/                Landing, Login, Issue, Saml
+│   └── nginx.conf                API proxy + health endpoint
 ├── admin/
-│   ├── app/routes/              auth, setup, saml_apps, sessions, keys, config, audit
-│   ├── app/services/            key_service, setup_service
-│   └── web/src/pages/           Dashboard, SamlApps, Sessions, Keys, Config, Audit
-├── layer/Dockerfile             Lambda layer (cryptography, lxml, powertools)
-├── shared-ui/src/               Shared MUI theme, FlowCard, QrDisplay, StatusBadge
-└── deploy.sh                    Interactive multi-tenant deployment script
+│   ├── app/routes/               auth, setup, saml_apps, sessions, keys, config, audit
+│   ├── app/services/             key_service, setup_service
+│   └── web/src/pages/            Dashboard, SamlApps, Sessions, Keys, Config, Audit
+├── layer/Dockerfile              Lambda layer build
+├── shared-ui/src/                Shared MUI theme + components
+└── deploy.sh                     Interactive deployment script
 ```
