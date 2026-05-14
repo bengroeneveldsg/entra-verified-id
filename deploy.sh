@@ -236,15 +236,39 @@ if ! $NON_INTERACTIVE; then
   multiselect PUBLIC_SUBNET_IDS_STR "Public subnets (for public ALB — choose ≥ 2 AZs):" "${PUBLIC_SUBNET_LABELS[@]}"
   PUBLIC_SUBNET_IDS_STR=$(echo "$PUBLIC_SUBNET_IDS_STR" | tr ',' '\n' | awk '{print $1}' | paste -sd',')
   save PUBLIC_SUBNET_IDS "$PUBLIC_SUBNET_IDS_STR"
+
+  echo ""
+  info "CloudFront sits in front of the public ALB, so the frontend Fargate tasks"
+  info "do not need a public IP. If your VPC has private subnets with NAT/egress,"
+  info "select them here to follow AWS best practice. Press Enter to skip (tasks"
+  info "will use the public subnets above with a public IP)."
+  echo ""
+  if [[ ${#PRIVATE_SUBNET_LABELS[@]} -gt 0 ]]; then
+    read -rp "  Use private subnets for frontend Fargate tasks? [y/N]: " use_private_frontend
+    if [[ "${use_private_frontend:-N}" =~ ^[Yy] ]]; then
+      multiselect FRONTEND_PRIVATE_SUBNET_IDS_STR "Private subnets for frontend Fargate tasks (choose ≥ 2 AZs):" "${PRIVATE_SUBNET_LABELS[@]}"
+      FRONTEND_PRIVATE_SUBNET_IDS_STR=$(echo "$FRONTEND_PRIVATE_SUBNET_IDS_STR" | tr ',' '\n' | awk '{print $1}' | paste -sd',')
+      save FRONTEND_PRIVATE_SUBNET_IDS "$FRONTEND_PRIVATE_SUBNET_IDS_STR"
+    else
+      FRONTEND_PRIVATE_SUBNET_IDS_STR=""
+      save FRONTEND_PRIVATE_SUBNET_IDS ""
+    fi
+  else
+    FRONTEND_PRIVATE_SUBNET_IDS_STR=""
+  fi
 else
   PRIVATE_SUBNET_IDS_STR="${SAVED[PRIVATE_SUBNET_IDS]:-}"
   PUBLIC_SUBNET_IDS_STR="${SAVED[PUBLIC_SUBNET_IDS]:-}"
+  FRONTEND_PRIVATE_SUBNET_IDS_STR="${SAVED[FRONTEND_PRIVATE_SUBNET_IDS]:-}"
   [[ -z "$PRIVATE_SUBNET_IDS_STR" ]] && error "PRIVATE_SUBNET_IDS required in .deploy.env"
   [[ -z "$PUBLIC_SUBNET_IDS_STR"  ]] && error "PUBLIC_SUBNET_IDS required in .deploy.env"
 fi
 
-success "Private subnets: $PRIVATE_SUBNET_IDS_STR"
-success "Public subnets:  $PUBLIC_SUBNET_IDS_STR"
+success "Private subnets:          $PRIVATE_SUBNET_IDS_STR"
+success "Public subnets:            $PUBLIC_SUBNET_IDS_STR"
+[[ -n "$FRONTEND_PRIVATE_SUBNET_IDS_STR" ]] && \
+  success "Frontend private subnets: $FRONTEND_PRIVATE_SUBNET_IDS_STR" || \
+  info    "Frontend Fargate:         using public subnets (no private subnets configured)"
 
 # ── Networking ─────────────────────────────────────────────────────────────────
 header "Network access"
@@ -350,6 +374,9 @@ echo "  Stage:           $STAGE"
 echo "  VPC:             $VPC_ID"
 echo "  Private subnets: $PRIVATE_SUBNET_IDS_STR"
 echo "  Public subnets:  $PUBLIC_SUBNET_IDS_STR"
+[[ -n "$FRONTEND_PRIVATE_SUBNET_IDS_STR" ]] && \
+  echo "  Frontend private: $FRONTEND_PRIVATE_SUBNET_IDS_STR" || \
+  echo "  Frontend Fargate: public subnets (no private subnets)"
 echo "  VPN CIDR:        $VPN_CIDR"
 echo "  Public domain:   $PUBLIC_DOMAIN"
 echo "  Admin domain:    $ADMIN_DOMAIN"
@@ -383,27 +410,29 @@ fi
 # ── CDK context file ──────────────────────────────────────────────────────────
 CDK_CONTEXT="$SCRIPT_DIR/cdk.context.json"
 jq -n \
-  --arg vpcId             "$VPC_ID" \
-  --arg privateSubnetIds  "$PRIVATE_SUBNET_IDS_STR" \
-  --arg publicSubnetIds   "$PUBLIC_SUBNET_IDS_STR" \
-  --arg vpnCidr           "$VPN_CIDR" \
-  --arg publicDomain      "$PUBLIC_DOMAIN" \
-  --arg adminDomain       "$ADMIN_DOMAIN" \
-  --arg hostedZoneId      "$HOSTED_ZONE_ID" \
-  --arg cfCertArn         "$CF_CERT_ARN" \
-  --arg regionalCertArn   "$REGIONAL_CERT" \
-  --arg stage             "$STAGE" \
+  --arg vpcId                      "$VPC_ID" \
+  --arg privateSubnetIds           "$PRIVATE_SUBNET_IDS_STR" \
+  --arg publicSubnetIds            "$PUBLIC_SUBNET_IDS_STR" \
+  --arg frontendPrivateSubnetIds   "$FRONTEND_PRIVATE_SUBNET_IDS_STR" \
+  --arg vpnCidr                    "$VPN_CIDR" \
+  --arg publicDomain               "$PUBLIC_DOMAIN" \
+  --arg adminDomain                "$ADMIN_DOMAIN" \
+  --arg hostedZoneId               "$HOSTED_ZONE_ID" \
+  --arg cfCertArn                  "$CF_CERT_ARN" \
+  --arg regionalCertArn            "$REGIONAL_CERT" \
+  --arg stage                      "$STAGE" \
   '{
-    vpcId:            $vpcId,
-    privateSubnetIds: $privateSubnetIds,
-    publicSubnetIds:  $publicSubnetIds,
-    vpnCidr:          $vpnCidr,
-    publicDomain:     $publicDomain,
-    adminDomain:      $adminDomain,
-    hostedZoneId:     $hostedZoneId,
-    cfCertArn:        $cfCertArn,
-    regionalCertArn:  $regionalCertArn,
-    stage:            $stage
+    vpcId:                    $vpcId,
+    privateSubnetIds:         $privateSubnetIds,
+    publicSubnetIds:          $publicSubnetIds,
+    frontendPrivateSubnetIds: (if $frontendPrivateSubnetIds != "" then $frontendPrivateSubnetIds else null end),
+    vpnCidr:                  $vpnCidr,
+    publicDomain:             $publicDomain,
+    adminDomain:              $adminDomain,
+    hostedZoneId:             $hostedZoneId,
+    cfCertArn:                $cfCertArn,
+    regionalCertArn:          $regionalCertArn,
+    stage:                    $stage
   }' > "$CDK_CONTEXT"
 success "cdk.context.json written"
 
