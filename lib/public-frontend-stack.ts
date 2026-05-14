@@ -35,7 +35,10 @@ export class PublicFrontendStack extends cdk.Stack {
   public readonly distributionDomain: string;
 
   constructor(scope: Construct, id: string, props: PublicFrontendStackProps) {
-    super(scope, id, props);
+    super(scope, id, {
+      ...props,
+      description: 'Entra Verified ID — Public frontend: React SPA on ECS Fargate behind CloudFront and internet-facing ALB',
+    });
     const {
       stage, publicVpcId, publicSubnetIds,
       apiUrl, hostingBucket, publicDomain, hostedZoneId,

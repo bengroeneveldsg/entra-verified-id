@@ -29,7 +29,10 @@ export class MainAppStack extends cdk.Stack {
   public readonly apiUrl: string;
 
   constructor(scope: Construct, id: string, props: MainAppStackProps) {
-    super(scope, id, props);
+    super(scope, id, {
+      ...props,
+      description: 'Entra Verified ID — Lambda functions (login, issue, SAML IdP) and API Gateway HTTP API',
+    });
     const {
       stage, tables, appSecret, hostingBucket, cryptoLayer,
       publicDomain, hostedZoneId, regionalCertArn,
