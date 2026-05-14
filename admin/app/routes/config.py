@@ -21,7 +21,6 @@ _SENSITIVE_KEYS = frozenset({
     "private_key_pem",
     "previous_private_key_pem",
     "issuer_verifier_client_secret",
-    "eam_provider_client_secret",
 })
 
 # Keys that are written by the setup wizard — should not be edited post-setup
