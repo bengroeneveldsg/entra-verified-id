@@ -90,12 +90,12 @@ flowchart TD
     subgraph PublicEdge["Public Edge (public subnets)"]
         CF[CloudFront\nACM cert us-east-1]
         PALB[Public ALB\nInternet-facing]
-        WAF[WAF\nIP Allowlist]
-        AALB[Internal ALB]
     end
 
     subgraph Private["Private Subnets (NAT/Cloud WAN egress)"]
         FG[ECS Fargate\nNginx + React SPA]
+        WAF[WAF\nIP Allowlist]
+        AALB[Internal ALB]
         ADM[ECS Fargate\nFastAPI + React]
     end
 
