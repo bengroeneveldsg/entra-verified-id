@@ -79,14 +79,19 @@ The standard Entra `VerifiedEmployee` credential includes: `displayName`, `given
 flowchart TD
     subgraph Internet["Internet"]
         U([Internet Users])
-        VPN([VPN Users])
+        CVPN([Client VPN])
+    end
+
+    subgraph CorpNet["Corporate Network"]
+        CORP([Corporate Office\n/ Branch])
+        DX[Direct Connect /\nSite-to-Site VPN]
     end
 
     subgraph PublicEdge["Public Edge (public subnets)"]
         CF[CloudFront\nACM cert us-east-1]
         PALB[Public ALB\nInternet-facing]
         WAF[WAF\nIP Allowlist]
-        AALB[Internal ALB\nVPN-only]
+        AALB[Internal ALB]
     end
 
     subgraph Private["Private Subnets (NAT/Cloud WAN egress)"]
@@ -113,7 +118,9 @@ flowchart TD
     L1 & L2 & L3 --> DDB & SM
     L3 --> S3
 
-    VPN --> WAF --> AALB --> ADM
+    CVPN -- "private IP range" --> WAF
+    CORP --> DX -- "private IP range" --> WAF
+    WAF --> AALB --> ADM
     ADM --> DDB & SM & S3
 ```
 
