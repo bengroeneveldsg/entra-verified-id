@@ -26,6 +26,9 @@ interface PublicFrontendStackProps extends cdk.StackProps {
   hostedZoneId?:    string;
   cfCertArn?:       string;
   regionalCertArn?: string;
+  // When provided, Fargate tasks run here (no public IP needed — egress via NAT/Cloud WAN).
+  // When omitted, tasks fall back to publicSubnetIds with assignPublicIp: true.
+  frontendPrivateSubnetIds?: string[];
 }
 
 export class PublicFrontendStack extends cdk.Stack {
@@ -36,8 +39,10 @@ export class PublicFrontendStack extends cdk.Stack {
     const {
       stage, publicVpcId, publicSubnetIds,
       apiUrl, hostingBucket, publicDomain, hostedZoneId,
-      cfCertArn, regionalCertArn,
+      cfCertArn, regionalCertArn, frontendPrivateSubnetIds,
     } = props;
+
+    const hasPrivateSubnets = !!(frontendPrivateSubnetIds && frontendPrivateSubnetIds.length > 0);
 
     // hasCfDomain: CloudFront gets a custom domain + cert (us-east-1 cert sufficient)
     const hasCfDomain  = !!(publicDomain && cfCertArn);
@@ -132,14 +137,20 @@ export class PublicFrontendStack extends cdk.Stack {
       },
     });
 
-    // ── Fargate service — in public subnets, public IP for ECR/S3 access ─────
+    // ── Fargate service ──────────────────────────────────────────────────────
+    // Prefer private subnets (no public IP; egress via NAT/Cloud WAN).
+    // Falls back to public subnets with a public IP when no private subnets are configured.
+    const fargateSubnets = hasPrivateSubnets
+      ? frontendPrivateSubnetIds!.map((id, i) => ec2.Subnet.fromSubnetId(this, `PrivSub${i}`, id))
+      : publicSubnets;
+
     const service = new ecs.FargateService(this, 'Service', {
       cluster,
       taskDefinition: taskDef,
       desiredCount:   2,
-      vpcSubnets:     { subnets: publicSubnets },
+      vpcSubnets:     { subnets: fargateSubnets },
       securityGroups: [fargateSg],
-      assignPublicIp: true,   // needed when in public subnets without NAT
+      assignPublicIp: !hasPrivateSubnets,
       circuitBreaker:  { rollback: true },
     });
 

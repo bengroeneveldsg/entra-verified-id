@@ -37,6 +37,11 @@ const publicVpcId     = requireContext('publicVpcId');
 const publicSubnetIds = requireContext('publicSubnetIds').split(',').map(s => s.trim());
 const adminVpcId      = ctx('adminVpcId')      ?? publicVpcId;
 const adminSubnetIds  = (ctx('adminSubnetIds') ?? ctx('publicSubnetIds') ?? '').split(',').map(s => s.trim());
+
+// Optional: private subnets for frontend Fargate tasks (ALB stays in public subnets).
+// When set, tasks have no public IP and egress via NAT or Cloud WAN.
+const frontendPrivateSubnetIds = ctx('frontendPrivateSubnetIds')
+  ?.split(',').map(s => s.trim()).filter(Boolean);
 const vpnCidr         = ctx('vpnCidr') ?? '0.0.0.0/0';
 
 // ── Domains + certs — all optional; omit for a no-custom-domain test deploy ──
@@ -80,6 +85,7 @@ const publicFrontendStack = new PublicFrontendStack(app, `EntraVid-PublicFronten
   hostedZoneId,
   cfCertArn,
   regionalCertArn,
+  frontendPrivateSubnetIds,
 });
 publicFrontendStack.addDependency(mainAppStack);
 
