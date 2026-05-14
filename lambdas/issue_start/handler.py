@@ -35,7 +35,7 @@ ENTRA_VID_SCOPE  = f"{ENTRA_VID_APP_ID}/.default"
 logger = Logger()
 
 # ── AWS singletons ────────────────────────────────────────────────────────────
-_region = os.environ.get("AWS_REGION", "ap-southeast-1")
+_region = os.environ.get("AWS_REGION")
 _dynamodb = boto3.resource("dynamodb", region_name=_region)
 _secrets_boto = boto3.client("secretsmanager", region_name=_region)
 
@@ -134,6 +134,7 @@ def _get_access_token(client_id: str, client_secret: str, tenant_id: str) -> str
     )
     with urllib.request.urlopen(req, timeout=10) as resp:
         return json.loads(resp.read())["access_token"]
+
 
 
 def _create_issuance_request(

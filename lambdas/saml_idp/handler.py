@@ -19,7 +19,7 @@ Security notes:
   - lxml exclusive C14N is used verbatim from the original — do not modify.
 
 Config keys used (from SystemConfig):
-  entity_id      — SAML IdP entity ID (e.g. https://login.bgamzn.com/saml)
+  entity_id      — SAML IdP entity ID (e.g. https://vid.example.com/saml)
   saml_sso_url   — public SSO endpoint URL
   saml_jwks_url  — JWKS endpoint for fetching the signing certificate
   tenant_id      — Entra tenant ID (for Graph API token endpoint)
@@ -59,7 +59,7 @@ from aws_lambda_powertools import Logger
 logger = Logger()
 
 # ── AWS singletons ────────────────────────────────────────────────────────────
-_region = os.environ.get("AWS_REGION", "ap-southeast-1")
+_region = os.environ.get("AWS_REGION")
 _dynamodb = boto3.resource("dynamodb", region_name=_region)
 _secrets_boto = boto3.client("secretsmanager", region_name=_region)
 
@@ -557,7 +557,9 @@ def _handle_sso(event: dict[str, Any]) -> dict[str, Any]:
     """Handle GET|POST /api/saml/sso."""
     authn_req_id, relay_state = _parse_authn_request(event)
     qs = event.get("queryStringParameters") or {}
-    app_id = qs.get("app", "kiro").strip()
+    app_id = qs.get("app", "").strip()
+    if not app_id:
+        return _json_response(400, {"error": "Missing required 'app' query parameter"})
     cfg = _get_app_config(app_id)
 
     try:
@@ -793,7 +795,9 @@ def _handle_complete(event: dict[str, Any]) -> dict[str, Any]:
 def _handle_initiate(event: dict[str, Any]) -> dict[str, Any]:
     """IdP-initiated SSO. Creates a session and returns sessionId."""
     qs = event.get("queryStringParameters") or {}
-    app_id = qs.get("app", "").strip() or "kiro"
+    app_id = qs.get("app", "").strip()
+    if not app_id:
+        return _json_response(400, {"error": "Missing required 'app' query parameter"})
     cfg = _get_app_config(app_id)
 
     session_id = str(uuid.uuid4())

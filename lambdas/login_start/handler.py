@@ -41,7 +41,7 @@ from aws_lambda_powertools import Logger
 logger = Logger()
 
 # ── AWS singletons ────────────────────────────────────────────────────────────
-_region = os.environ.get("AWS_REGION", "ap-southeast-1")
+_region = os.environ.get("AWS_REGION")
 _dynamodb = boto3.resource("dynamodb", region_name=_region)
 _secrets_boto = boto3.client("secretsmanager", region_name=_region)
 
