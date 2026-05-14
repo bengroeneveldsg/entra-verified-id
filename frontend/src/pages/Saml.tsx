@@ -6,9 +6,12 @@ import {
   LinearProgress,
   Typography,
 } from '@mui/material';
+import { alpha, useTheme } from '@mui/material/styles';
 import ReplayIcon from '@mui/icons-material/Replay';
 import ComputerIcon from '@mui/icons-material/Computer';
-import { useSearchParams } from 'react-router-dom';
+import BadgeOutlinedIcon from '@mui/icons-material/BadgeOutlined';
+import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { FlowCard, QrDisplay, StatusBadge } from '@entra-vid/shared-ui';
 import { getApiBase, loginStatus } from '../api';
 
@@ -133,6 +136,8 @@ function submitSamlForm(
 // ---------------------------------------------------------------------------
 
 export default function Saml() {
+  const navigate = useNavigate();
+  const theme = useTheme();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [flowState, setFlowState] = useState<FlowState>('loading');
@@ -296,26 +301,75 @@ export default function Saml() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Shared glassmorphism card styles (mirrors FlowCard's inner card)
+  const cardSx = {
+    width: '100%',
+    maxWidth: 480,
+    backdropFilter: 'blur(16px)',
+    WebkitBackdropFilter: 'blur(16px)',
+    backgroundColor: alpha('#ffffff', 0.90),
+    border: `1px solid ${alpha(theme.palette.primary.main, 0.12)}`,
+    boxShadow: `0 8px 40px ${alpha(theme.palette.primary.dark, 0.12)}`,
+    borderRadius: '20px',
+  };
+
   // ── Render ───────────────────────────────────────────────────────────────
   return (
-    <FlowCard
-      title={appDisplayName ? `Sign In to ${appDisplayName}` : 'Sign In'}
-      subtitle="Scan the QR code with Microsoft Authenticator to authenticate."
-      footer={
-        <Typography variant="caption" color="text.disabled">
-          Secured by{' '}
-          <Box
-            component="a"
-            href="https://learn.microsoft.com/en-us/entra/verified-id/"
-            target="_blank"
-            rel="noopener noreferrer"
-            sx={{ color: 'inherit', textDecoration: 'underline' }}
-          >
-            Microsoft Entra Verified ID
-          </Box>
-        </Typography>
-      }
+    // Shared full-viewport centred column — holds both cards
+    <Box
+      sx={{
+        minHeight: '100dvh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 2,
+        px: 2,
+        py: 4,
+        background: `radial-gradient(ellipse at 50% 0%, ${alpha(theme.palette.primary.light, 0.15)} 0%, ${theme.palette.background.default} 65%)`,
+      }}
     >
+      {/* ── Companion card — "Don't have a Verified ID?" ─────────── */}
+      <Box sx={{ ...cardSx, px: 3, py: 2.5, display: 'flex', alignItems: 'center', gap: 2 }}>
+        <Box
+          sx={{
+            width: 40,
+            height: 40,
+            borderRadius: '10px',
+            flexShrink: 0,
+            background: `linear-gradient(135deg, ${theme.palette.primary.main}, ${theme.palette.secondary.main})`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <BadgeOutlinedIcon sx={{ fontSize: 20, color: '#fff' }} />
+        </Box>
+        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+          <Typography variant="body2" fontWeight={700} sx={{ lineHeight: 1.3 }}>
+            Don't have a Verified ID yet?
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            Get your credential in Microsoft Authenticator first.
+          </Typography>
+        </Box>
+        <Button
+          variant="outlined"
+          size="small"
+          endIcon={<ArrowForwardIcon sx={{ fontSize: 14 }} />}
+          onClick={() => navigate('/issue')}
+          sx={{ flexShrink: 0, fontWeight: 700, borderRadius: 1.5 }}
+        >
+          Get credential
+        </Button>
+      </Box>
+
+      {/* ── QR card — FlowCard with viewport-centering disabled ─────── */}
+      <FlowCard
+        title={appDisplayName ? `Sign In to ${appDisplayName}` : 'Sign In'}
+        subtitle="Scan the QR code with Microsoft Authenticator to authenticate."
+        sx={{ minHeight: 'auto', py: 0, px: 0, background: 'transparent' }}
+      >
       {/* Loading */}
       {flowState === 'loading' && (
         <Box sx={{ width: '100%' }}>
@@ -389,6 +443,7 @@ export default function Saml() {
           </Button>
         </Box>
       )}
-    </FlowCard>
+      </FlowCard>
+    </Box>
   );
 }

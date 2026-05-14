@@ -174,8 +174,8 @@ export class AdminStack extends cdk.Stack {
       portMappings: [{ containerPort: 8000 }],
       environment: {
         STATE_TABLE:           tables.stateTable.tableName,
-        APP_TABLE:             tables.samlAppsTable.tableName,
-        SYSTEM_CONFIG_TABLE:   tables.systemConfig.tableName,
+        APP_TABLE:              tables.samlAppsTable.tableName,
+        SYSTEM_CONFIG_TABLE:    tables.systemConfig.tableName,
         ADMIN_USERS_TABLE:     tables.adminUsers.tableName,
         AUDIT_LOG_TABLE:       tables.auditLog.tableName,
         HOSTING_BUCKET:        hostingBucket.bucketName,
