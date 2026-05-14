@@ -351,7 +351,7 @@ cd v2
 
 ### Option 4 — AWS CloudShell
 
-> **Note:** CloudShell does not have Docker available. Use CloudShell for **CDK-only changes** (updating Lambda code, modifying stack config). For full deployments that build Docker images (first deploy, admin console changes, frontend changes), use a local machine or EC2 instead.
+> **Note:** CloudShell includes Docker. Full deployments that build container images (first deploy, admin console changes, frontend changes) work in CloudShell, but each session starts fresh with no Docker layer cache — builds will be slower than on a persistent machine.
 
 CloudShell already has AWS CLI and Node.js. You only need to install CDK:
 
