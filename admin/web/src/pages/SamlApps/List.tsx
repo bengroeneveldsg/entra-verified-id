@@ -18,9 +18,9 @@ import {
   ContentCopy,
   CheckCircle,
   Download,
-  Edit,
   ToggleOn,
   ToggleOff,
+  Visibility,
 } from '@mui/icons-material';
 
 function downloadMetadata() {
@@ -236,19 +236,19 @@ export function SamlAppList() {
       sortable: false,
       renderCell: ({ row }: GridRenderCellParams<SamlApp>) => (
         <Box className="actions-cell">
-          <Tooltip title="Edit" placement="top">
+          <Tooltip title="View" placement="top">
             <IconButton
               size="small"
-              onClick={() => navigate(`/saml-apps/${row.appId}`)}
+              onClick={(e) => { e.stopPropagation(); navigate(`/saml-apps/${row.appId}`); }}
               sx={{ color: 'text.secondary', '&:hover': { color: 'primary.main' } }}
             >
-              <Edit sx={{ fontSize: 16 }} />
+              <Visibility sx={{ fontSize: 16 }} />
             </IconButton>
           </Tooltip>
           <Tooltip title={row.enabled ? 'Disable app' : 'Enable app'} placement="top">
             <IconButton
               size="small"
-              onClick={() => toggleMutation.mutate({ appId: row.appId, enabled: row.enabled })}
+              onClick={(e) => { e.stopPropagation(); toggleMutation.mutate({ appId: row.appId, enabled: row.enabled }); }}
               sx={{
                 color: row.enabled ? 'success.main' : 'text.disabled',
                 '&:hover': { color: row.enabled ? 'error.main' : 'success.main' },
@@ -322,6 +322,7 @@ export function SamlAppList() {
         density="compact"
         pageSizeOptions={[25, 50, 100]}
         initialState={{ pagination: { paginationModel: { pageSize: 25 } } }}
+        onRowClick={(params) => navigate(`/saml-apps/${params.row.appId}`)}
         disableRowSelectionOnClick
         autoHeight
         slots={{
@@ -347,7 +348,7 @@ export function SamlAppList() {
             </Box>
           ),
         }}
-        sx={dataGridSx}
+        sx={{ ...dataGridSx, '& .MuiDataGrid-row': { ...dataGridSx['& .MuiDataGrid-row'], cursor: 'pointer' } }}
       />
 
       {/* Fallback dialog for HTTP (no clipboard API) */}

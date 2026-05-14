@@ -104,7 +104,7 @@ export function SamlAppEdit() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['saml-apps'] });
-      navigate('/saml-apps');
+      navigate(isNew ? '/saml-apps' : `/saml-apps/${appId}`);
     },
     onError: (err: any) =>
       setError(err?.response?.data?.detail ?? 'Save failed'),
@@ -134,7 +134,7 @@ export function SamlAppEdit() {
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 3 }}>
-        <IconButton onClick={() => navigate('/saml-apps')} size="small">
+        <IconButton onClick={() => navigate(isNew ? '/saml-apps' : `/saml-apps/${appId}`)} size="small">
           <ArrowBack />
         </IconButton>
         <Box>
@@ -319,7 +319,7 @@ export function SamlAppEdit() {
         </Accordion>
 
         <Box sx={{ display: 'flex', gap: 2, pt: 1 }}>
-          <Button variant="outlined" onClick={() => navigate('/saml-apps')}>
+          <Button variant="outlined" onClick={() => navigate(isNew ? '/saml-apps' : `/saml-apps/${appId}`)}>
             Cancel
           </Button>
           <Button

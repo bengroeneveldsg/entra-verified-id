@@ -9,6 +9,7 @@ import { AppShell } from './components/AppShell';
 import Dashboard from './pages/Dashboard';
 import { SamlAppList } from './pages/SamlApps/List';
 import { SamlAppEdit } from './pages/SamlApps/Edit';
+import { SamlAppDetail } from './pages/SamlApps/Detail';
 import Sessions from './pages/Sessions';
 import Keys from './pages/Keys';
 import Config from './pages/Config';
@@ -74,7 +75,8 @@ export default function App() {
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="saml-apps" element={<SamlAppList />} />
         <Route path="saml-apps/new" element={<SamlAppEdit />} />
-        <Route path="saml-apps/:appId" element={<SamlAppEdit />} />
+        <Route path="saml-apps/:appId" element={<SamlAppDetail />} />
+        <Route path="saml-apps/:appId/edit" element={<SamlAppEdit />} />
         <Route path="sessions" element={<Sessions />} />
         <Route path="keys" element={<Keys />} />
         <Route path="config" element={<Config />} />
