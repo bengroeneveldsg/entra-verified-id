@@ -11,7 +11,10 @@ export class LayersStack extends cdk.Stack {
   public readonly cryptoLayer: lambda.ILayerVersion;
 
   constructor(scope: Construct, id: string, props: LayersStackProps) {
-    super(scope, id, props);
+    super(scope, id, {
+      ...props,
+      description: 'Entra Verified ID — Lambda layer: cryptography, lxml, cffi, aws-lambda-powertools',
+    });
 
     // x86_64 layer: cryptography, lxml, cffi, aws-lambda-powertools (Python 3.12)
     this.cryptoLayer = new lambda.LayerVersion(this, 'CryptoLayer', {

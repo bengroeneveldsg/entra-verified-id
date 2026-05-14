@@ -27,7 +27,10 @@ export class DataStack extends cdk.Stack {
   public readonly hostingBucket:       s3.Bucket;
 
   constructor(scope: Construct, id: string, props: DataStackProps) {
-    super(scope, id, props);
+    super(scope, id, {
+      ...props,
+      description: 'Entra Verified ID — DynamoDB tables, Secrets Manager secrets, and S3 hosting bucket',
+    });
     const { stage } = props;
 
     // ── DynamoDB ────────────────────────────────────────────────────────────

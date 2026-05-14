@@ -35,7 +35,10 @@ export class AdminStack extends cdk.Stack {
   public readonly adminAlbDns: string;
 
   constructor(scope: Construct, id: string, props: AdminStackProps) {
-    super(scope, id, props);
+    super(scope, id, {
+      ...props,
+      description: 'Entra Verified ID — Admin console: FastAPI + React on ECS Fargate behind internal ALB with WAF (VPN/private network access only)',
+    });
     const {
       stage, adminVpcId, adminSubnetIds,
       tables, appSecret, bootstrapSecret, jwtSecret, hostingBucket,
