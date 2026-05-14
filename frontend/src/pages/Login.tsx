@@ -9,8 +9,12 @@ import {
   Stepper,
   Typography,
 } from '@mui/material';
+import { alpha, useTheme } from '@mui/material/styles';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ReplayIcon from '@mui/icons-material/Replay';
+import BadgeOutlinedIcon from '@mui/icons-material/BadgeOutlined';
+import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
+import { useNavigate } from 'react-router-dom';
 import { FlowCard, QrDisplay, StatusBadge } from '@entra-vid/shared-ui';
 import { loginStart, loginStatus } from '../api';
 
@@ -52,6 +56,8 @@ function stepIndex(state: FlowState): number {
 // ---------------------------------------------------------------------------
 
 export default function Login() {
+  const navigate = useNavigate();
+  const theme = useTheme();
   const [flowState, setFlowState] = useState<FlowState>('loading');
   const [qrCode, setQrCode] = useState('');
   const [deepLink, setDeepLink] = useState('');
@@ -153,25 +159,72 @@ export default function Login() {
   // ── Render ──────────────────────────────────────────────────────────────
   const active = stepIndex(flowState);
 
+  const cardSx = {
+    width: '100%',
+    maxWidth: 480,
+    backdropFilter: 'blur(16px)',
+    WebkitBackdropFilter: 'blur(16px)',
+    backgroundColor: alpha('#ffffff', 0.90),
+    border: `1px solid ${alpha(theme.palette.primary.main, 0.12)}`,
+    boxShadow: `0 8px 40px ${alpha(theme.palette.primary.dark, 0.12)}`,
+    borderRadius: '20px',
+  };
+
   return (
-    <FlowCard
-      title="Sign In"
-      subtitle="Scan the QR code with Microsoft Authenticator to sign in."
-      footer={
-        <Typography variant="caption" color="text.disabled">
-          Secured by{' '}
-          <Box
-            component="a"
-            href="https://learn.microsoft.com/en-us/entra/verified-id/"
-            target="_blank"
-            rel="noopener noreferrer"
-            sx={{ color: 'inherit', textDecoration: 'underline' }}
-          >
-            Microsoft Entra Verified ID
-          </Box>
-        </Typography>
-      }
+    <Box
+      sx={{
+        minHeight: '100dvh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 2,
+        px: 2,
+        py: 4,
+        background: `radial-gradient(ellipse at 50% 0%, ${alpha(theme.palette.primary.light, 0.15)} 0%, ${theme.palette.background.default} 65%)`,
+      }}
     >
+      {/* ── Companion card ──────────────────────────────────────────── */}
+      <Box sx={{ ...cardSx, px: 3, py: 2.5, display: 'flex', alignItems: 'center', gap: 2 }}>
+        <Box
+          sx={{
+            width: 40,
+            height: 40,
+            borderRadius: '10px',
+            flexShrink: 0,
+            background: `linear-gradient(135deg, ${theme.palette.primary.main}, ${theme.palette.secondary.main})`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <BadgeOutlinedIcon sx={{ fontSize: 20, color: '#fff' }} />
+        </Box>
+        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+          <Typography variant="body2" fontWeight={700} sx={{ lineHeight: 1.3 }}>
+            Don't have a Verified ID yet?
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            Get your credential in Microsoft Authenticator first.
+          </Typography>
+        </Box>
+        <Button
+          variant="outlined"
+          size="small"
+          endIcon={<ArrowForwardIcon sx={{ fontSize: 14 }} />}
+          onClick={() => navigate('/issue')}
+          sx={{ flexShrink: 0, fontWeight: 700, borderRadius: 1.5 }}
+        >
+          Get credential
+        </Button>
+      </Box>
+
+      {/* ── Main QR card ────────────────────────────────────────────── */}
+      <FlowCard
+        title="Sign In"
+        subtitle="Scan the QR code with Microsoft Authenticator to sign in."
+        sx={{ minHeight: 'auto', py: 0, px: 0, background: 'transparent' }}
+      >
       {/* Progress stepper */}
       <Stepper activeStep={active} alternativeLabel sx={{ width: '100%' }}>
         {STEPS.map((label) => (
@@ -302,6 +355,7 @@ export default function Login() {
           </Button>
         </Box>
       )}
-    </FlowCard>
+      </FlowCard>
+    </Box>
   );
 }
