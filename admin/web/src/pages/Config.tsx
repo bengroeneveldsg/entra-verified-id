@@ -37,7 +37,6 @@ import { configApi, ConfigItem } from '../api/config';
 const KEY_META: Record<string, { label: string; description: string }> = {
   tenant_id:                  { label: 'Tenant ID',                  description: 'Azure AD / Entra tenant directory ID' },
   issuer_verifier_client_id:  { label: 'IssuerVerifier Client ID',   description: 'App registration for credential issuance and verification' },
-  eam_provider_client_id:     { label: 'EAM Provider Client ID',     description: 'App registration for External Authentication Method' },
   did_authority:              { label: 'DID Authority',              description: 'Your Decentralised Identifier (DID)' },
   authority:                  { label: 'Authority (runtime)',        description: 'DID authority used by Lambda handlers' },
   manifest_url:               { label: 'Credential Manifest URL',   description: 'Entra Verified ID credential contract manifest' },
@@ -63,12 +62,12 @@ const SECTIONS = [
     id: 'tenant',
     label: 'Entra Tenant',
     icon: <Business />,
-    keys: ['tenant_id', 'issuer_verifier_client_id', 'eam_provider_client_id'],
-    description: 'Azure AD app registrations used for credential operations',
+    keys: ['tenant_id', 'issuer_verifier_client_id'],
+    description: 'Azure AD tenant and app registration for credential operations',
   },
   {
     id: 'identity',
-    label: 'Identity & Credentials',
+    label: 'Identity & DID',
     icon: <Fingerprint />,
     keys: ['did_authority', 'authority', 'manifest_url', 'accepted_issuer'],
     description: 'Decentralised Identifier and credential contract configuration',
