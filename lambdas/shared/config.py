@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 _TABLE_NAME: str = os.environ["SYSTEM_CONFIG_TABLE"]
 _CACHE_TTL: int = 300  # 5 minutes
 
-_dynamodb = boto3.resource("dynamodb", region_name=os.environ.get("AWS_REGION", "ap-southeast-1"))
+_dynamodb = boto3.resource("dynamodb", region_name=os.environ.get("AWS_REGION"))
 _table    = _dynamodb.Table(_TABLE_NAME)
 
 _cache: dict[str, str] | None = None

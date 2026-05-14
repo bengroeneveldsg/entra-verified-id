@@ -160,7 +160,7 @@ if ! $NON_INTERACTIVE; then
   [[ "${confirm:-Y}" =~ ^[Nn] ]] && { echo "Aborted."; exit 0; }
 fi
 
-prompt AWS_REGION "AWS region" "ap-southeast-1"
+prompt AWS_REGION "AWS region" ""
 export CDK_DEFAULT_ACCOUNT="$ACCOUNT"
 export CDK_DEFAULT_REGION="$AWS_REGION"
 
@@ -253,8 +253,8 @@ success "VPN CIDR: $VPN_CIDR"
 
 # ── Domains ────────────────────────────────────────────────────────────────────
 header "Domain names"
-prompt PUBLIC_DOMAIN  "Public-facing domain (e.g. vid-v2.example.com)"          ""
-prompt ADMIN_DOMAIN   "Internal admin domain (e.g. admin.internal.example.com)" ""
+prompt PUBLIC_DOMAIN  "Public-facing domain (e.g. vid.example.com)"          ""
+prompt ADMIN_DOMAIN   "Internal admin domain (e.g. admin.example.com)" ""
 
 # ── Route 53 hosted zone ───────────────────────────────────────────────────────
 header "Route 53"

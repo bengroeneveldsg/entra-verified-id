@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import Optional
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,12 +13,12 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
     )
 
-    # DynamoDB table names
-    state_table: str = "VidSessions"
-    app_table: str = "SamlApps"
-    system_config_table: str = "SystemConfig"
-    admin_users_table: str = "AdminUsers"
-    audit_log_table: str = "AuditLog"
+    # DynamoDB table names — injected by CDK as STATE_TABLE, APP_TABLE, etc.
+    state_table: str = ""
+    app_table: str = ""
+    system_config_table: str = ""
+    admin_users_table: str = ""
+    audit_log_table: str = ""
 
     # S3
     hosting_bucket: str = ""
@@ -24,10 +28,10 @@ class Settings(BaseSettings):
     jwt_secret_name: str = ""
     bootstrap_secret_name: str = ""
 
-    # AWS / deployment
-    aws_region: str = "us-east-1"
+    # AWS / deployment — AWS_REGION is always injected by ECS; None lets boto3 read the env
+    aws_region: Optional[str] = None
     admin_domain: str = ""
-    stage: str = "prod"
+    stage: str = ""
     # Set to false when the admin ALB uses HTTP (no TLS cert).
     # Set to true in production when HTTPS is terminating at the ALB.
     secure_cookie: bool = True

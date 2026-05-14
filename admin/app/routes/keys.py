@@ -42,8 +42,9 @@ async def get_keys(user: dict = Depends(current_user)) -> dict:
         oidc_url = f"https://{public_domain}/.well-known/openid-configuration"
     else:
         bucket = settings.hosting_bucket
-        jwks_url = f"https://{bucket}.s3.{settings.aws_region}.amazonaws.com/.well-known/jwks.json"
-        oidc_url = f"https://{bucket}.s3.{settings.aws_region}.amazonaws.com/.well-known/openid-configuration"
+        region = settings.aws_region or ""
+        jwks_url = f"https://{bucket}.s3.{region}.amazonaws.com/.well-known/jwks.json"
+        oidc_url = f"https://{bucket}.s3.{region}.amazonaws.com/.well-known/openid-configuration"
 
     return {
         "kid":             kid,
