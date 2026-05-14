@@ -77,14 +77,24 @@ The standard Entra `VerifiedEmployee` credential includes: `displayName`, `given
 
 ```mermaid
 flowchart TD
-    subgraph Public["Public Access"]
+    subgraph Internet["Internet"]
         U([Internet Users])
-        CF[CloudFront\nACM cert us-east-1]
-        PALB[Public ALB\nInternet-facing]
-        FG[ECS Fargate\nNginx + React SPA]
+        VPN([VPN Users])
     end
 
-    subgraph API["API Layer"]
+    subgraph PublicEdge["Public Edge (public subnets)"]
+        CF[CloudFront\nACM cert us-east-1]
+        PALB[Public ALB\nInternet-facing]
+        WAF[WAF\nIP Allowlist]
+        AALB[Internal ALB\nVPN-only]
+    end
+
+    subgraph Private["Private Subnets (NAT/Cloud WAN egress)"]
+        FG[ECS Fargate\nNginx + React SPA]
+        ADM[ECS Fargate\nFastAPI + React]
+    end
+
+    subgraph API["API Layer (no VPC)"]
         APIGW[API Gateway\nHTTP API]
         L1[login_start\nlogin_callback\nlogin_status]
         L2[issue_start\nissue_callback]
@@ -95,13 +105,6 @@ flowchart TD
         DDB[(DynamoDB\n5 tables)]
         SM[(Secrets Manager)]
         S3[(S3\nhosting bucket)]
-    end
-
-    subgraph Admin["Admin Access VPN Only"]
-        VPN([VPN Users\n10.0.0.0/8])
-        WAF[WAF\nIP Allowlist]
-        AALB[Internal ALB\nPrivate VPC]
-        ADM[ECS Fargate\nFastAPI + React]
     end
 
     U --> CF --> PALB --> FG
@@ -123,8 +126,8 @@ All infrastructure is defined as AWS CDK TypeScript. Five stacks deploy in depen
 | `EntraVid-Data-{stage}` | 5 DynamoDB tables, 3 Secrets Manager secrets, S3 hosting bucket |
 | `EntraVid-Layers-{stage}` | Lambda layer: cryptography + lxml + aws-lambda-powertools |
 | `EntraVid-MainApp-{stage}` | 6 Lambda functions + API Gateway HTTP API |
-| `EntraVid-PublicFrontend-{stage}` | ECS Fargate, internet-facing ALB, CloudFront distribution |
-| `EntraVid-Admin-{stage}` | ECS Fargate, internal ALB, WAF |
+| `EntraVid-PublicFrontend-{stage}` | ECS Fargate (private subnets when configured, else public), internet-facing ALB, CloudFront distribution |
+| `EntraVid-Admin-{stage}` | ECS Fargate (private subnets), internal ALB, WAF |
 
 > **No networking resources are created by CDK.** All VPCs, subnets, NAT gateways, and routing must be pre-existing. Operators supply VPC and subnet IDs as deploy-time context parameters.
 
@@ -157,8 +160,8 @@ All infrastructure is defined as AWS CDK TypeScript. Five stacks deploy in depen
 
 | Resource | Requirement |
 |---|---|
-| VPC (public) | ≥ 2 public subnets in different AZs, internet gateway, routing to internet |
-| VPC (private) | ≥ 2 private subnets in different AZs, outbound connectivity for ECS (NAT or VPC endpoints) |
+| Public subnets | ≥ 2 subnets in different AZs with an internet gateway — used for the internet-facing ALB (and frontend Fargate tasks if no private subnets are configured) |
+| Private subnets (recommended) | ≥ 2 subnets in different AZs with outbound internet access (NAT gateway or Cloud WAN) — used for admin Fargate tasks and optionally for frontend Fargate tasks (AWS best practice when CloudFront is the public entry point) |
 | ACM certificate | Wildcard cert for your domain in `us-east-1` (for CloudFront). Regional cert optional for ALB HTTPS. |
 
 ### Required Entra configuration
