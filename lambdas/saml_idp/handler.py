@@ -93,7 +93,7 @@ _config_cache: dict[str, str] | None = None
 _config_cache_at: float = 0.0
 _CONFIG_TTL: int = 300
 
-_app_config_cache: dict[str, dict] = {}
+_app_config_cache: dict[str, tuple[dict, float]] = {}  # {app_id: (cfg, cached_at)}
 _cached_cert_b64: str | None = None
 _cached_graph_token: dict | None = None  # {token, expires_at}
 
@@ -158,15 +158,17 @@ def _require_config(key: str) -> str:
 # ── Per-app config loader ─────────────────────────────────────────────────────
 
 def _get_app_config(app_id: str) -> dict:
-    """Fetch per-app SAML config from APP_TABLE (module-level cached)."""
-    if app_id in _app_config_cache:
-        return _app_config_cache[app_id]
+    """Fetch per-app SAML config from APP_TABLE with TTL-based cache."""
+    now = time.time()
+    cached = _app_config_cache.get(app_id)
+    if cached and (now - cached[1]) < _CONFIG_TTL:
+        return cached[0]
     try:
         resp = _dynamodb.Table(_APP_TABLE).get_item(Key={"appId": app_id})
         item = resp.get("Item")
         if item:
             cfg = {k: v for k, v in item.items() if k != "appId"}
-            _app_config_cache[app_id] = cfg
+            _app_config_cache[app_id] = (cfg, now)
             logger.info("Loaded app config", extra={"appId": app_id})
             return cfg
     except Exception as exc:
