@@ -23,20 +23,21 @@ const stage = ctx('stage') ?? 'v2';
 // The CDK never creates VPCs, subnets, route tables, NAT gateways, or VPC
 // endpoints. Those are the operator's responsibility.
 //
-// A single private VPC (adminVpcId + adminSubnetIds) is shared by both the
-// admin console and the public frontend. Both ALBs are internal. Fargate tasks
-// have no public IP. Public subnets and an internet gateway are not required.
+// publicVpcId + publicSubnetIds — public frontend ALB (internal) + Fargate.
+//   The VPC MUST have an internet gateway (CloudFront VPC Origins requirement).
+//   If the subnets are public with no NAT, Fargate needs assignPublicIp for ECR.
+//   If private subnets with NAT are added later, set assignPublicIp: false.
 //
-// Subnets must have outbound internet access (NAT gateway or Cloud WAN) for
-// ECR image pulls and AWS API calls.
+// adminVpcId + adminSubnetIds — admin ALB + Fargate (private, Cloud WAN egress).
 
-const adminVpcId     = requireContext('adminVpcId');
-const adminSubnetIds = requireContext('adminSubnetIds').split(',').map(s => s.trim());
+const publicVpcId     = requireContext('publicVpcId');
+const publicSubnetIds = requireContext('publicSubnetIds').split(',').map(s => s.trim());
+const adminVpcId      = ctx('adminVpcId') ?? publicVpcId;
+const adminSubnetIds  = (ctx('adminSubnetIds') ?? ctx('publicSubnetIds') ?? '').split(',').map(s => s.trim());
 
 // Optional: CloudFront VPC Origins managed prefix list ID.
 // When set, the frontend ALB SG allows only CloudFront origin IPs.
-// When omitted, falls back to anyIpv4() — safe since the ALB is internal
-// in a private VPC with no internet route.
+// When omitted, falls back to anyIpv4().
 const cloudfrontPrefixListId = ctx('cloudfrontPrefixListId');
 
 const vpnCidr = ctx('vpnCidr') ?? '0.0.0.0/0';
@@ -74,14 +75,15 @@ mainAppStack.addDependency(layersStack);
 const publicFrontendStack = new PublicFrontendStack(app, `EntraVid-PublicFrontend-${stage}`, {
   env,
   stage,
-  vpcId:                  adminVpcId,
-  subnetIds:              adminSubnetIds,
+  vpcId:                  publicVpcId,
+  subnetIds:              publicSubnetIds,
   apiUrl:                 mainAppStack.apiUrl,
   hostingBucket:          dataStack.hostingBucket,
   publicDomain,
   hostedZoneId,
   cfCertArn,
   cloudfrontPrefixListId,
+  // assignPublicIp defaults true — set false when private subnets with NAT are available
 });
 publicFrontendStack.addDependency(mainAppStack);
 
