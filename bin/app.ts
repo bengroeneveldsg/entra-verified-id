@@ -23,17 +23,19 @@ const stage = ctx('stage') ?? 'v2';
 // The CDK never creates VPCs, subnets, route tables, NAT gateways, or VPC
 // endpoints. Those are the operator's responsibility.
 //
-// publicVpcId + publicSubnetIds — public frontend ALB (internal) + Fargate.
-//   The VPC MUST have an internet gateway (CloudFront VPC Origins requirement).
-//   If the subnets are public with no NAT, Fargate needs assignPublicIp for ECR.
-//   If private subnets with NAT are added later, set assignPublicIp: false.
+// frontendVpcId + frontendSubnetIds — frontend internal ALB + Fargate.
+//   The VPC must have an internet gateway attached (CloudFront VPC Origin requirement).
+//   Subnets should be private with NAT/Cloud WAN egress for ECR pulls.
+//   Set assignPublicIp: false when subnets have NAT egress (recommended).
 //
-// adminVpcId + adminSubnetIds — admin ALB + Fargate (private, Cloud WAN egress).
+// adminVpcId + adminSubnetIds — admin internal ALB + Fargate.
+//   Defaults to frontendVpcId/frontendSubnetIds when not set separately.
+//   Override when admin and frontend are in different VPCs.
 
-const publicVpcId     = requireContext('publicVpcId');
-const publicSubnetIds = requireContext('publicSubnetIds').split(',').map(s => s.trim());
-const adminVpcId      = ctx('adminVpcId') ?? publicVpcId;
-const adminSubnetIds  = (ctx('adminSubnetIds') ?? ctx('publicSubnetIds') ?? '').split(',').map(s => s.trim());
+const frontendVpcId     = requireContext('frontendVpcId');
+const frontendSubnetIds = requireContext('frontendSubnetIds').split(',').map(s => s.trim());
+const adminVpcId        = ctx('adminVpcId') ?? frontendVpcId;
+const adminSubnetIds    = (ctx('adminSubnetIds') ?? ctx('frontendSubnetIds') ?? '').split(',').map(s => s.trim());
 
 // Optional: CloudFront VPC Origins managed prefix list ID.
 // When set, the frontend ALB SG allows only CloudFront origin IPs.
@@ -75,8 +77,8 @@ mainAppStack.addDependency(layersStack);
 const publicFrontendStack = new PublicFrontendStack(app, `EntraVid-PublicFrontend-${stage}`, {
   env,
   stage,
-  vpcId:                  publicVpcId,
-  subnetIds:              publicSubnetIds,
+  vpcId:                  frontendVpcId,
+  subnetIds:              frontendSubnetIds,
   apiUrl:                 mainAppStack.apiUrl,
   hostingBucket:          dataStack.hostingBucket,
   publicDomain,
