@@ -180,10 +180,15 @@ export class PublicFrontendStack extends cdk.Stack {
       httpPort:       80,
     });
 
-    // S3 OAC origin — serves /.well-known/* directly from the hosting bucket.
-    // CloudFront signs requests with SigV4 so the private bucket accepts them.
-    // This replaces the previous Nginx proxy-to-S3 path which lacked credentials.
-    const s3WellKnownOrigin = origins.S3BucketOrigin.withOriginAccessControl(hostingBucket);
+    // S3 origin for /.well-known/* — served directly by CloudFront from S3.
+    // The .well-known files (DID config, JWKS, OIDC discovery) are publicly
+    // readable in S3 by design; no OAC needed. This avoids a CDK cyclic
+    // dependency that arises when S3BucketOrigin.withOriginAccessControl()
+    // creates the OAC in DataStack and then writes the distribution ARN back.
+    const s3WellKnownOrigin = new origins.HttpOrigin(
+      `${hostingBucket.bucketName}.s3.${this.region}.amazonaws.com`,
+      { protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY },
+    );
 
     const distribution = new cloudfront.Distribution(this, 'Distribution', {
       comment:     `EntraVerifiedID ${stage} public frontend`,
