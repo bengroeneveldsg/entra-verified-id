@@ -25,8 +25,11 @@ interface PublicFrontendStackProps extends cdk.StackProps {
   hostedZoneId?:          string;
   cfCertArn?:             string;
   // When provided, ALB SG allows only CloudFront VPC Origins prefix list.
-  // When omitted, allows anyIpv4() — safe since ALB is internal (private VPC, no internet route).
+  // When omitted, allows anyIpv4() — safe since ALB is internal with no internet route.
   cloudfrontPrefixListId?: string;
+  // Set false when subnetIds are private subnets with NAT/Cloud WAN egress for ECR pulls.
+  // Set true (default) when subnetIds are public subnets that require a public IP for ECR.
+  assignPublicIp?: boolean;
 }
 
 export class PublicFrontendStack extends cdk.Stack {
@@ -40,7 +43,7 @@ export class PublicFrontendStack extends cdk.Stack {
     const {
       stage, vpcId, subnetIds,
       apiUrl, hostingBucket, publicDomain, hostedZoneId,
-      cfCertArn, cloudfrontPrefixListId,
+      cfCertArn, cloudfrontPrefixListId, assignPublicIp = true,
     } = props;
 
     // hasCfDomain: CloudFront gets a custom domain + cert (us-east-1 cert sufficient)
@@ -144,7 +147,7 @@ export class PublicFrontendStack extends cdk.Stack {
       desiredCount:   2,
       vpcSubnets:     { subnets },
       securityGroups: [fargateSg],
-      assignPublicIp: false,
+      assignPublicIp,
       circuitBreaker:  { rollback: true },
     });
 
