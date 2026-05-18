@@ -9,26 +9,24 @@ import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as route53targets from 'aws-cdk-lib/aws-route53-targets';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as ecr_assets from 'aws-cdk-lib/aws-ecr-assets';
-import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as path from 'path';
 import { Construct } from 'constructs';
 
 interface PublicFrontendStackProps extends cdk.StackProps {
-  stage:           string;
-  publicVpcId:     string;
-  publicSubnetIds: string[];
-  apiUrl:          string;
-  hostingBucket:   s3.Bucket;
+  stage:      string;
+  vpcId:      string;
+  subnetIds:  string[];
+  apiUrl:     string;
+  hostingBucket: s3.Bucket;
   // All optional — omit for a no-custom-domain/no-cert test deployment
-  publicDomain?:    string;
-  hostedZoneId?:    string;
-  cfCertArn?:       string;
-  regionalCertArn?: string;
-  // When provided, Fargate tasks run here (no public IP needed — egress via NAT/Cloud WAN).
-  // When omitted, tasks fall back to publicSubnetIds with assignPublicIp: true.
-  frontendPrivateSubnetIds?: string[];
+  publicDomain?:          string;
+  hostedZoneId?:          string;
+  cfCertArn?:             string;
+  // When provided, ALB SG allows only CloudFront VPC Origins prefix list.
+  // When omitted, allows anyIpv4() — safe since ALB is internal (private VPC, no internet route).
+  cloudfrontPrefixListId?: string;
 }
 
 export class PublicFrontendStack extends cdk.Stack {
@@ -37,39 +35,37 @@ export class PublicFrontendStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: PublicFrontendStackProps) {
     super(scope, id, {
       ...props,
-      description: 'Entra Verified ID — Public frontend: React SPA on ECS Fargate behind CloudFront and internet-facing ALB',
+      description: 'Entra Verified ID — Public frontend: React SPA on ECS Fargate behind CloudFront VPC Origin and internal ALB (private subnets)',
     });
     const {
-      stage, publicVpcId, publicSubnetIds,
+      stage, vpcId, subnetIds,
       apiUrl, hostingBucket, publicDomain, hostedZoneId,
-      cfCertArn, regionalCertArn, frontendPrivateSubnetIds,
+      cfCertArn, cloudfrontPrefixListId,
     } = props;
 
-    const hasPrivateSubnets = !!(frontendPrivateSubnetIds && frontendPrivateSubnetIds.length > 0);
-
     // hasCfDomain: CloudFront gets a custom domain + cert (us-east-1 cert sufficient)
-    const hasCfDomain  = !!(publicDomain && cfCertArn);
-    // hasAlbTls: ALB also gets HTTPS listener (regional cert required — optional)
-    const hasAlbTls    = !!(regionalCertArn);
+    const hasCfDomain = !!(publicDomain && cfCertArn);
     // hasDns: automatic Route53 record (skip when zone is in another account)
-    const hasDns       = !!(hostedZoneId && publicDomain);
+    const hasDns      = !!(hostedZoneId && publicDomain);
 
-    // ── VPC lookup — public VPC (has internet gateway) ───────────────────────
-    const vpc = ec2.Vpc.fromLookup(this, 'PublicVpc', { vpcId: publicVpcId });
-    const publicSubnets = publicSubnetIds.map((id, i) =>
-      ec2.Subnet.fromSubnetId(this, `PubSub${i}`, id),
+    // ── VPC lookup ───────────────────────────────────────────────────────────
+    const vpc = ec2.Vpc.fromLookup(this, 'Vpc', { vpcId });
+    const subnets = subnetIds.map((id, i) =>
+      ec2.Subnet.fromSubnetId(this, `Sub${i}`, id),
     );
 
     // ── Security groups ──────────────────────────────────────────────────────
 
     const albSg = new ec2.SecurityGroup(this, 'AlbSg', {
       vpc,
-      description: 'Public frontend ALB',
+      description: 'Public frontend internal ALB — allow CloudFront VPC Origins',
     });
-    albSg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80), 'HTTP');
-    if (hasAlbTls) {
-      albSg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), 'HTTPS from CloudFront');
-    }
+    // Allow port 80 from CloudFront VPC Origins prefix list when provided, else anyIpv4()
+    // (safe fallback: ALB is internal in a private VPC with no internet route)
+    const albIngressPeer = cloudfrontPrefixListId
+      ? ec2.Peer.prefixList(cloudfrontPrefixListId)
+      : ec2.Peer.anyIpv4();
+    albSg.addIngressRule(albIngressPeer, ec2.Port.tcp(80), 'HTTP from CloudFront VPC Origins');
 
     const fargateSg = new ec2.SecurityGroup(this, 'FargateSg', {
       vpc,
@@ -140,29 +136,24 @@ export class PublicFrontendStack extends cdk.Stack {
       },
     });
 
-    // ── Fargate service ──────────────────────────────────────────────────────
-    // Prefer private subnets (no public IP; egress via NAT/Cloud WAN).
-    // Falls back to public subnets with a public IP when no private subnets are configured.
-    const fargateSubnets = hasPrivateSubnets
-      ? frontendPrivateSubnetIds!.map((id, i) => ec2.Subnet.fromSubnetId(this, `PrivSub${i}`, id))
-      : publicSubnets;
+    // ── Fargate service — private subnets, no public IP ──────────────────────
 
     const service = new ecs.FargateService(this, 'Service', {
       cluster,
       taskDefinition: taskDef,
       desiredCount:   2,
-      vpcSubnets:     { subnets: fargateSubnets },
+      vpcSubnets:     { subnets },
       securityGroups: [fargateSg],
-      assignPublicIp: !hasPrivateSubnets,
+      assignPublicIp: false,
       circuitBreaker:  { rollback: true },
     });
 
-    // ── Internet-facing ALB ──────────────────────────────────────────────────
+    // ── Internal ALB (private subnets) ───────────────────────────────────────
 
     const alb = new elbv2.ApplicationLoadBalancer(this, 'Alb', {
       vpc,
-      internetFacing:   true,
-      vpcSubnets:       { subnets: publicSubnets },
+      internetFacing:   false,
+      vpcSubnets:       { subnets },
       securityGroup:    albSg,
       loadBalancerName: `entra-vid-public-${stage}`,
     });
@@ -176,33 +167,17 @@ export class PublicFrontendStack extends cdk.Stack {
       deregistrationDelay: cdk.Duration.seconds(30),
     });
 
-    if (hasAlbTls) {
-      // HTTPS listener on ALB (regional cert present)
-      alb.addListener('HttpsListener', {
-        port:         443,
-        protocol:     elbv2.ApplicationProtocol.HTTPS,
-        certificates: [acm.Certificate.fromCertificateArn(this, 'AlbCert', regionalCertArn!)],
-        defaultAction: elbv2.ListenerAction.forward([targetGroup]),
-      });
-      alb.addListener('HttpRedirect', {
-        port:          80,
-        defaultAction: elbv2.ListenerAction.redirect({ protocol: 'HTTPS', port: '443', permanent: true }),
-      });
-    } else {
-      // HTTP-only ALB — CloudFront handles user-facing HTTPS, ALB is internal
-      alb.addListener('HttpListener', {
-        port:          80,
-        defaultAction: elbv2.ListenerAction.forward([targetGroup]),
-      });
-    }
+    alb.addListener('HttpListener', {
+      port:          80,
+      defaultAction: elbv2.ListenerAction.forward([targetGroup]),
+    });
 
     // ── CloudFront distribution ──────────────────────────────────────────────
 
-    // CloudFront → ALB: use HTTPS if ALB has a cert, else HTTP (fine — AWS backbone)
-    const albOrigin = new origins.LoadBalancerV2Origin(alb, {
-      protocolPolicy: hasAlbTls
-        ? cloudfront.OriginProtocolPolicy.HTTPS_ONLY
-        : cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+    // CloudFront VPC Origin → internal ALB (HTTP only; TLS terminates at CloudFront)
+    const albOrigin = origins.VpcOrigin.withApplicationLoadBalancer(alb, {
+      protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+      httpPort:       80,
     });
 
     const distribution = new cloudfront.Distribution(this, 'Distribution', {

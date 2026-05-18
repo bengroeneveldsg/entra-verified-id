@@ -23,26 +23,23 @@ const stage = ctx('stage') ?? 'v2';
 // The CDK never creates VPCs, subnets, route tables, NAT gateways, or VPC
 // endpoints. Those are the operator's responsibility.
 //
-// publicVpcId      + publicSubnetIds   — public frontend ALB + Fargate
-//                                        (subnets must have internet access for ECR pulls
-//                                         and an internet-facing ALB)
-// adminVpcId       + adminSubnetIds    — admin ALB + Fargate
-//                                        (subnets must have internet access for ECR pulls;
-//                                         ALB is internal, WAF restricts to vpnCidr)
+// A single private VPC (adminVpcId + adminSubnetIds) is shared by both the
+// admin console and the public frontend. Both ALBs are internal. Fargate tasks
+// have no public IP. Public subnets and an internet gateway are not required.
 //
-// If adminVpcId/adminSubnetIds are not set, the admin uses the public VPC/subnets.
-// This is the recommended default for test deployments.
+// Subnets must have outbound internet access (NAT gateway or Cloud WAN) for
+// ECR image pulls and AWS API calls.
 
-const publicVpcId     = requireContext('publicVpcId');
-const publicSubnetIds = requireContext('publicSubnetIds').split(',').map(s => s.trim());
-const adminVpcId      = ctx('adminVpcId')      ?? publicVpcId;
-const adminSubnetIds  = (ctx('adminSubnetIds') ?? ctx('publicSubnetIds') ?? '').split(',').map(s => s.trim());
+const adminVpcId     = requireContext('adminVpcId');
+const adminSubnetIds = requireContext('adminSubnetIds').split(',').map(s => s.trim());
 
-// Optional: private subnets for frontend Fargate tasks (ALB stays in public subnets).
-// When set, tasks have no public IP and egress via NAT or Cloud WAN.
-const frontendPrivateSubnetIds = ctx('frontendPrivateSubnetIds')
-  ?.split(',').map(s => s.trim()).filter(Boolean);
-const vpnCidr         = ctx('vpnCidr') ?? '0.0.0.0/0';
+// Optional: CloudFront VPC Origins managed prefix list ID.
+// When set, the frontend ALB SG allows only CloudFront origin IPs.
+// When omitted, falls back to anyIpv4() — safe since the ALB is internal
+// in a private VPC with no internet route.
+const cloudfrontPrefixListId = ctx('cloudfrontPrefixListId');
+
+const vpnCidr = ctx('vpnCidr') ?? '0.0.0.0/0';
 
 // ── Domains + certs — all optional; omit for a no-custom-domain test deploy ──
 const publicDomain    = ctx('publicDomain');
@@ -77,15 +74,14 @@ mainAppStack.addDependency(layersStack);
 const publicFrontendStack = new PublicFrontendStack(app, `EntraVid-PublicFrontend-${stage}`, {
   env,
   stage,
-  publicVpcId,
-  publicSubnetIds,
-  apiUrl:        mainAppStack.apiUrl,
-  hostingBucket: dataStack.hostingBucket,
+  vpcId:                  adminVpcId,
+  subnetIds:              adminSubnetIds,
+  apiUrl:                 mainAppStack.apiUrl,
+  hostingBucket:          dataStack.hostingBucket,
   publicDomain,
   hostedZoneId,
   cfCertArn,
-  regionalCertArn,
-  frontendPrivateSubnetIds,
+  cloudfrontPrefixListId,
 });
 publicFrontendStack.addDependency(mainAppStack);
 
