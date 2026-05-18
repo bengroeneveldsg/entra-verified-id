@@ -11,16 +11,17 @@ A production-ready AWS deployment that enables **passwordless QR-code authentica
 1. [What it does](#what-it-does)
 2. [How Verified ID works](#how-verified-id-works)
 3. [Architecture](#architecture)
-4. [Prerequisites](#prerequisites)
-5. [Deploying](#deploying)
-6. [Configuration](#configuration)
-7. [Authentication flows](#authentication-flows)
-8. [SAML IdP](#saml-idp)
-9. [Admin console](#admin-console)
-10. [Signing keys](#signing-keys)
-11. [Security model](#security-model)
-12. [Development](#development)
-13. [Troubleshooting](#troubleshooting)
+4. [AWS services used](#aws-services-used)
+5. [Prerequisites](#prerequisites)
+6. [Deploying](#deploying)
+7. [Configuration](#configuration)
+8. [Authentication flows](#authentication-flows)
+9. [SAML IdP](#saml-idp)
+10. [Admin console](#admin-console)
+11. [Signing keys](#signing-keys)
+12. [Security model](#security-model)
+13. [Development](#development)
+14. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -150,6 +151,31 @@ All infrastructure is defined as AWS CDK TypeScript. Five stacks deploy in depen
 | `issue_start` | `POST /api/issue/start` | Creates a VID issuance request; returns QR code + requestId |
 | `issue_callback` | `POST /api/issue/callback` | Entra VID webhook — records issuance success or failure |
 | `saml_idp` | `GET\|POST /api/saml/*` | SAML 2.0 IdP: metadata, SSO, initiate, complete, app list |
+
+---
+
+## AWS services used
+
+The solution is built entirely on AWS-managed services — no self-managed infrastructure is required beyond a pre-existing VPC and subnets.
+
+| Service | Resources created | Role in this solution |
+|---|---|---|
+| **Amazon DynamoDB** | 5 tables | The core data layer. **StateTable** tracks in-progress QR authentication requests with a 10-minute TTL. **SamlAppsTable** stores SAML SP configurations. **SystemConfigTable** holds all non-secret runtime config (tenant ID, DIDs, domains). **AdminUsersTable** stores admin console credentials. **AuditLogTable** provides a tamper-evident audit trail with 90-day TTL. All tables use pay-per-request billing and point-in-time recovery. |
+| **AWS Secrets Manager** | 3 secrets | Stores all sensitive values outside the codebase. The **app secret** holds Entra client credentials, the webhook `callbackSecret`, and the RSA signing key PEM. The **bootstrap secret** is a one-time admin password auto-generated at deploy time and voided after onboarding. The **JWT signing secret** is an HMAC key for admin session tokens. Lambda functions access secrets via the AWS Parameters and Secrets Lambda Extension and cache them for 5 minutes. |
+| **AWS Lambda** | 6 functions + 1 layer | All business logic runs serverless. `login_start` and `issue_start` call the Microsoft Entra Verified ID REST API to create QR-based presentation and issuance requests. `login_callback` and `issue_callback` receive signed webhooks back from Entra. `login_status` is polled by the browser and atomically transitions state to *claimed* on first read. `saml_idp` implements a full SAML 2.0 IdP (metadata, SSO, assertion signing). A shared Lambda Layer bundles `cryptography`, `lxml`, and `aws-lambda-powertools`. |
+| **Amazon API Gateway (HTTP API)** | 1 API, 6 route groups | The public REST endpoint for all Lambda functions. Routes map directly to each Lambda handler. Throttling limits are set to 100 req/s sustained and 200 burst. CORS is scoped to the public domain in production. An optional custom domain connects via ACM and Route 53. |
+| **Amazon S3** | 2 buckets | Both buckets are fully private with public access blocked. The **hosting bucket** stores `.well-known/` DID and JWKS files, `config.json`, and the SAML signing certificate — written by the admin console, read by Lambdas via IAM. The **well-known bucket** (separate to avoid cross-stack circular dependencies) serves `/.well-known/*` via CloudFront using Origin Access Control (OAC) with SigV4 signing. |
+| **Amazon ECS Fargate** | 2 clusters, 2 services | Runs the two long-lived stateful containers. The **public frontend** cluster serves the Nginx + React SPA (QR login, issue, and SAML screens). The **admin** cluster runs the FastAPI + React admin console. Both run on Fargate in private subnets with 2 desired tasks for availability; neither has a public IP. |
+| **Application Load Balancer** | 2 internal ALBs | Both ALBs are internal (private subnets only). The **frontend ALB** is the origin target for CloudFront's VPC Origin — traffic never traverses the public internet. The **admin ALB** sits behind WAF and is only reachable from the VPN CIDR. Each ALB forwards to its Fargate target group on the container port. |
+| **Amazon CloudFront** | 1 distribution, 1 OAC | The public edge for the frontend SPA. Connects to the internal frontend ALB via **VPC Origin** — no public ALB or internet gateway rule is needed. Path behaviours direct `/assets/*` and `/.well-known/*` to caching policies while `/api/*` and the SPA root bypass the cache. A CloudFront-managed Origin Access Control (OAC) enforces SigV4 request signing for the S3 well-known origin. |
+| **AWS WAF** | 1 WebACL, 1 IP set | Protects the admin console. The WebACL default action is **BLOCK**; the single allow rule matches the operator-supplied VPN CIDR. The WebACL is associated with the admin ALB so all non-VPN traffic is dropped before reaching Fargate. |
+| **AWS IAM** | 5 roles | Fine-grained least-privilege roles for every compute resource. The **Lambda execution role** grants `GetItem`/`PutItem`/`UpdateItem` on specific table ARNs and `GetSecretValue` on the app secret only. The **admin task role** has broader DynamoDB read/write, full secret access, and S3 write for the hosting buckets. Separate **task execution roles** handle ECR image pulls and CloudWatch Logs delivery. |
+| **Amazon ECR** | 2 image repositories | CDK builds the admin and frontend Docker images locally during `cdk deploy` and pushes them to CDK-managed ECR repositories. Fargate pulls images from ECR at service launch. |
+| **Amazon CloudWatch Logs** | 2 log groups | Container stdout/stderr for the admin and frontend Fargate services is streamed via the `awslogs` driver. Log groups have a 1-month retention policy. The admin console queries logs directly from the Audit Log page using CloudWatch Logs Insights. Lambda functions log to their default `/aws/lambda/*` log groups. |
+| **AWS X-Ray** | (tracing) | Active tracing is enabled on all Lambda functions. Trace segments are automatically emitted for DynamoDB and Secrets Manager SDK calls, providing end-to-end visibility across the presentation and issuance flows without any code changes. |
+| **AWS Certificate Manager (ACM)** | Referenced, not created | TLS certificates are created by the operator and passed to CDK as ARNs. A **CloudFront certificate** (must be in `us-east-1`) terminates HTTPS at the edge. An optional **regional certificate** covers API Gateway and the admin ALB when custom domains are configured. |
+| **Amazon Route 53** | Up to 3 DNS records | When a hosted zone ID is provided, CDK creates an A alias record for the public domain (→ CloudFront), a CNAME for the API subdomain (→ API Gateway), and an A alias for the admin subdomain (→ admin ALB). Omitting the hosted zone ID skips record creation — useful when DNS is managed in a separate account. |
+| **Amazon VPC / EC2** | 4 security groups | CDK does not create VPCs or subnets — operators supply existing IDs at deploy time. CDK creates security groups to wire the components together: CloudFront prefix list → frontend ALB → Fargate tasks, and VPN CIDR → admin ALB (then WAF-filtered) → admin Fargate tasks. Lambdas run outside the VPC and reach AWS services over IAM-authenticated endpoints. |
 
 ---
 
