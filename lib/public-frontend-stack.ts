@@ -155,7 +155,7 @@ export class PublicFrontendStack extends cdk.Stack {
       internetFacing:   false,
       vpcSubnets:       { subnets },
       securityGroup:    albSg,
-      loadBalancerName: `entra-vid-public-${stage}`,
+      loadBalancerName: `entra-vid-frontend-${stage}`,
     });
 
     const targetGroup = new elbv2.ApplicationTargetGroup(this, 'TG', {
