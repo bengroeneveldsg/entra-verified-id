@@ -244,9 +244,14 @@ This app registration is used by the Lambda functions to call the Verified ID RE
    - Search for `Verifiable Credential`
    - Select **Verifiable Credentials Service Request**
    - Add application permission: `VerifiableCredential.Create.All`
-5. **Grant admin consent** — click **Grant admin consent for {organisation}** and confirm
+5. **If you intend to restrict any SAML application to specific Entra groups** — also add a Microsoft Graph permission:
+   - **API permissions → Add a permission → Microsoft Graph → Application permissions**
+   - Search for and add: `GroupMember.Read.All`
+   - This allows the Lambda to call the Graph API `checkMemberObjects` endpoint to verify group membership at login time
+   - If you do not plan to use group-based access control on any SAML app, this permission is not required
+6. **Grant admin consent** — click **Grant admin consent for {organisation}** and confirm all permissions
 
-> The `VerifiableCredential.Create.All` permission with admin consent is required for the Lambda functions to create presentation and issuance requests on behalf of your tenant.
+> `VerifiableCredential.Create.All` is always required. `GroupMember.Read.All` is only needed if you configure `allowedGroupIds` on one or more SAML applications — the Lambda will call the Microsoft Graph API to verify the authenticated user is in at least one of the permitted groups before issuing the SAML assertion.
 
 ---
 
@@ -664,6 +669,28 @@ For landing-page initiated flows (no SP redirect), the browser calls `/api/saml/
 Admin console → SAML Applications → Add App. The app tile appears on the public landing page immediately.
 
 > **After key rotation:** Re-download IdP metadata and re-upload to your IAM SAML provider. The old certificate will no longer be valid for signature verification.
+
+### Group-based access control
+
+Each SAML application can optionally be restricted to one or more Entra security groups. When `allowedGroupIds` is configured on an app, the Lambda calls the Microsoft Graph API after the user's Verified ID credential is verified — before the SAML assertion is issued. If the user is not a member of at least one of the permitted groups, the authentication is denied.
+
+**How it works:**
+
+1. The user completes the QR scan and their VerifiedEmployee credential is verified
+2. The Lambda retrieves the `allowedGroupIds` configured for the SAML app
+3. If the list is non-empty, a Graph API call is made to `POST /v1.0/users/{email}/checkMemberObjects` with the list of group IDs
+4. If the user is not in any of the allowed groups, a `403` is returned and no SAML assertion is produced
+5. If the list is empty, all verified users are permitted (no group restriction)
+
+The check **fails closed** — if the Graph API call fails for any reason (network error, invalid credentials), access is denied rather than granted.
+
+**Configuring group access on a SAML app:**
+
+1. In the Azure Portal, find the group(s) you want to allow: **Entra ID → Groups → {group} → Overview** — copy the **Object ID** (a UUID)
+2. In the admin console, open the SAML app and add the group Object IDs to the **Allowed Group IDs** field (one per line)
+3. Ensure the IssuerVerifier app registration has `GroupMember.Read.All` with admin consent granted (see [Step 3 of Entra configuration](#step-3--create-the-issuerverifier-app-registration))
+
+> The same `clientId` and `clientSecret` from the IssuerVerifier app registration are used for both Verified ID API calls and Graph API group checks — no additional app registration is required.
 
 ---
 
