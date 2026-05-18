@@ -386,6 +386,8 @@ fi
 # ── CDK context file ──────────────────────────────────────────────────────────
 CDK_CONTEXT="$SCRIPT_DIR/cdk.context.json"
 jq -n \
+  --arg frontendVpcId     "$VPC_ID" \
+  --arg frontendSubnetIds "$PRIVATE_SUBNET_IDS_STR" \
   --arg adminVpcId        "$VPC_ID" \
   --arg adminSubnetIds    "$PRIVATE_SUBNET_IDS_STR" \
   --arg cfPrefixListId    "$CF_PREFIX_LIST_ID" \
@@ -397,6 +399,8 @@ jq -n \
   --arg regionalCertArn   "$REGIONAL_CERT" \
   --arg stage             "$STAGE" \
   '{
+    frontendVpcId:          $frontendVpcId,
+    frontendSubnetIds:      $frontendSubnetIds,
     adminVpcId:             $adminVpcId,
     adminSubnetIds:         $adminSubnetIds,
     cloudfrontPrefixListId: (if $cfPrefixListId != "" then $cfPrefixListId else null end),
