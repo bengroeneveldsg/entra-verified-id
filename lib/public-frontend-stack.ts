@@ -58,7 +58,7 @@ export class PublicFrontendStack extends cdk.Stack {
 
     const albSg = new ec2.SecurityGroup(this, 'AlbSg', {
       vpc,
-      description: 'Public frontend internal ALB — allow CloudFront VPC Origins',
+      description: 'Public frontend internal ALB - allow CloudFront VPC Origins',
     });
     // Allow port 80 from CloudFront VPC Origins prefix list when provided, else anyIpv4()
     // (safe fallback: ALB is internal in a private VPC with no internet route)
