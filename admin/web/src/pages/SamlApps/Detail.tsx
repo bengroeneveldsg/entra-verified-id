@@ -13,7 +13,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTheme, alpha } from '@mui/material/styles';
 import { format, parseISO } from 'date-fns';
-import { samlAppsApi, SamlApp } from '../../api/samlApps';
+import { samlAppsApi, SamlApp, EntraGroup } from '../../api/samlApps';
 import { STATUS_DOT_COLORS } from '../../components/TableStyles';
 
 function StatusDot({ enabled }: { enabled: boolean }) {
@@ -103,6 +103,15 @@ export function SamlAppDetail() {
       return failureCount < 2;
     },
   });
+
+  const { data: resolvedGroups } = useQuery<EntraGroup[]>({
+    queryKey: ['resolve-groups', app?.allowedGroupIds],
+    queryFn: () => samlAppsApi.resolveGroups(app!.allowedGroupIds),
+    enabled: !!app?.allowedGroupIds?.length,
+    staleTime: 5 * 60_000,
+  });
+
+  const groupById = Object.fromEntries((resolvedGroups ?? []).map((g) => [g.id, g]));
 
   if (isLoading) {
     return (
@@ -198,14 +207,18 @@ export function SamlAppDetail() {
           <Typography variant="body2" color="text.secondary" fontWeight={500}>Allowed Groups</Typography>
           {app.allowedGroupIds && app.allowedGroupIds.length > 0 ? (
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-              {app.allowedGroupIds.map((id) => (
-                <Chip
-                  key={id}
-                  label={id}
-                  size="small"
-                  sx={{ fontFamily: 'monospace', fontSize: 11 }}
-                />
-              ))}
+              {app.allowedGroupIds.map((id) => {
+                const group = groupById[id];
+                return (
+                  <Chip
+                    key={id}
+                    label={group?.displayName ?? id}
+                    title={id}
+                    size="small"
+                    sx={{ fontFamily: group?.displayName ? 'inherit' : 'monospace', fontSize: 11 }}
+                  />
+                );
+              })}
             </Box>
           ) : (
             <Typography variant="body2" color="text.secondary" fontStyle="italic">

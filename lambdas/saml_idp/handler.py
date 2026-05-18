@@ -816,6 +816,7 @@ def _handle_initiate(event: dict[str, Any]) -> dict[str, Any]:
             "provider_arn": cfg.get("providerArn", ""),
             "session_name": cfg.get("sessionName", _DEFAULT_APP["sessionName"]),
             "session_duration": cfg.get("sessionDuration", _DEFAULT_APP["sessionDuration"]),
+            "allowed_group_ids": cfg.get("allowedGroupIds", []),
             "createdAt": now,
             "ttl": now + _TTL_SECONDS,
         }
