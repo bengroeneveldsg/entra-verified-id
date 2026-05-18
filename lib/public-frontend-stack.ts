@@ -124,10 +124,7 @@ export class PublicFrontendStack extends cdk.Stack {
       image:        ecs.ContainerImage.fromDockerImageAsset(image),
       portMappings: [{ containerPort: 80 }],
       environment: {
-        API_URL:          apiUrl,
-        HOSTING_BUCKET:   hostingBucket.bucketName,
-        AWS_REGION:       this.region,
-        HOSTING_BUCKET_URL: `https://${hostingBucket.bucketName}.s3.${this.region}.amazonaws.com`,
+        API_URL: apiUrl,
       },
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'frontend', logGroup }),
       healthCheck: {
@@ -183,6 +180,11 @@ export class PublicFrontendStack extends cdk.Stack {
       httpPort:       80,
     });
 
+    // S3 OAC origin — serves /.well-known/* directly from the hosting bucket.
+    // CloudFront signs requests with SigV4 so the private bucket accepts them.
+    // This replaces the previous Nginx proxy-to-S3 path which lacked credentials.
+    const s3WellKnownOrigin = origins.S3BucketOrigin.withOriginAccessControl(hostingBucket);
+
     const distribution = new cloudfront.Distribution(this, 'Distribution', {
       comment:     `EntraVerifiedID ${stage} public frontend`,
       // Custom CloudFront domain requires cfCertArn in us-east-1; omit for *.cloudfront.net default
@@ -218,10 +220,9 @@ export class PublicFrontendStack extends cdk.Stack {
           responseHeadersPolicy: cloudfront.ResponseHeadersPolicy.SECURITY_HEADERS,
         },
         '/.well-known/*': {
-          origin:               albOrigin,
+          origin:               s3WellKnownOrigin,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-          cachePolicy:          cloudfront.CachePolicy.CACHING_DISABLED,
-          originRequestPolicy:  cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+          cachePolicy:          cloudfront.CachePolicy.CACHING_OPTIMIZED,
           responseHeadersPolicy: cloudfront.ResponseHeadersPolicy.SECURITY_HEADERS,
         },
       },

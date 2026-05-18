@@ -42,10 +42,10 @@ COPY --from=builder /workspace/frontend/dist /usr/share/nginx/html
 # Copy our nginx config template (uses envsubst variables)
 COPY frontend/nginx.conf /etc/nginx/nginx.conf.template
 
-# envsubst replaces ${API_URL} and ${HOSTING_BUCKET_URL} at container start.
-# We expose only port 80; TLS termination happens at the ALB / CloudFront.
+# envsubst replaces ${API_URL} at container start.
+# We expose only port 80; TLS termination happens at CloudFront.
 EXPOSE 80
 
 # Boot: substitute env vars in the nginx config then launch nginx
 CMD ["/bin/sh", "-c", \
-     "envsubst '${API_URL} ${HOSTING_BUCKET_URL}' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && nginx -g 'daemon off;'"]
+     "envsubst '${API_URL}' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && nginx -g 'daemon off;'"]
