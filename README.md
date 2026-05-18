@@ -167,8 +167,9 @@ All infrastructure is defined as AWS CDK TypeScript. Five stacks deploy in depen
 
 | Resource | Requirement |
 |---|---|
-| Private subnets (required) | ≥ 2 subnets in different AZs with outbound internet access (NAT gateway or Cloud WAN) — used for both the admin and frontend ALBs and all Fargate tasks. Public subnets are not required. |
-| ACM certificate | Wildcard cert for your domain in `us-east-1` (for CloudFront). Regional cert optional for ALB HTTPS. |
+| VPC with internet gateway (frontend) | CloudFront VPC Origin requires the target VPC to have an IGW attached. The frontend internal ALB and Fargate tasks live here. If the VPC only has public subnets, Fargate tasks need a public IP for ECR pulls; adding private subnets with NAT removes that requirement. |
+| Private subnets with egress (admin) | ≥ 2 subnets in different AZs with outbound internet access (NAT gateway or Cloud WAN) — used for the admin internal ALB and Fargate tasks. |
+| ACM certificate | Wildcard cert for your domain in `us-east-1` (for CloudFront). No regional cert needed — both ALBs are HTTP-only internally; TLS terminates at CloudFront. |
 
 ### Required Entra configuration
 
@@ -789,7 +790,7 @@ v2/
 │   ├── data-stack.ts             DynamoDB, Secrets Manager, S3
 │   ├── layers-stack.ts           Lambda layer (Docker build)
 │   ├── main-app-stack.ts         Lambda functions + API Gateway routes
-│   ├── public-frontend-stack.ts  ECS Fargate + internet ALB + CloudFront
+│   ├── public-frontend-stack.ts  ECS Fargate + internal ALB + CloudFront VPC Origin
 │   └── admin-stack.ts            Admin ECS Fargate + internal ALB + WAF
 ├── lambdas/
 │   ├── shared/                   config.py + secrets.py (TTL-cached)
