@@ -161,7 +161,7 @@ The solution is built entirely on AWS-managed services — no self-managed infra
 | Service | Resources created | Role in this solution |
 |---|---|---|
 | **Amazon DynamoDB** | 5 tables | The core data layer. **StateTable** tracks in-progress QR authentication requests with a 10-minute TTL. **SamlAppsTable** stores SAML SP configurations. **SystemConfigTable** holds all non-secret runtime config (tenant ID, DIDs, domains). **AdminUsersTable** stores admin console credentials. **AuditLogTable** provides a tamper-evident audit trail with 90-day TTL. All tables use pay-per-request billing and point-in-time recovery. |
-| **AWS Secrets Manager** | 3 secrets | Stores all sensitive values outside the codebase. The **app secret** holds Entra client credentials, the webhook `callbackSecret`, and the RSA signing key PEM. The **bootstrap secret** is a one-time admin password auto-generated at deploy time and voided after onboarding. The **JWT signing secret** is an HMAC key for admin session tokens. Lambda functions access secrets via the AWS Parameters and Secrets Lambda Extension and cache them for 5 minutes. |
+| **AWS Secrets Manager** | 3 secrets | Stores all sensitive values outside the codebase. The **app secret** holds Entra client credentials, the webhook `callbackSecret`, and the RSA signing key PEM. The **bootstrap secret** is a one-time admin password auto-generated at deploy time and **permanently deleted** (`ForceDeleteWithoutRecovery`) immediately after the admin account is created during onboarding. The **JWT signing secret** is an HMAC key for admin session tokens. Lambda functions access secrets via the AWS Parameters and Secrets Lambda Extension and cache them for 5 minutes. |
 | **AWS Lambda** | 6 functions + 1 layer | All business logic runs serverless. `login_start` and `issue_start` call the Microsoft Entra Verified ID REST API to create QR-based presentation and issuance requests. `login_callback` and `issue_callback` receive signed webhooks back from Entra. `login_status` is polled by the browser and atomically transitions state to *claimed* on first read. `saml_idp` implements a full SAML 2.0 IdP (metadata, SSO, assertion signing). A shared Lambda Layer bundles `cryptography`, `lxml`, and `aws-lambda-powertools`. |
 | **Amazon API Gateway (HTTP API)** | 1 API, 6 route groups | The public REST endpoint for all Lambda functions. Routes map directly to each Lambda handler. Throttling limits are set to 100 req/s sustained and 200 burst. CORS is scoped to the public domain in production. An optional custom domain connects via ACM and Route 53. |
 | **Amazon S3** | 2 buckets | Both buckets are fully private with public access blocked. The **hosting bucket** stores `.well-known/` DID and JWKS files, `config.json`, and the SAML signing certificate — written by the admin console, read by Lambdas via IAM. The **well-known bucket** (separate to avoid cross-stack circular dependencies) serves `/.well-known/*` via CloudFront using Origin Access Control (OAC) with SigV4 signing. |
@@ -719,11 +719,65 @@ All Entra VID callbacks include an `x-api-key` header. The `callbackSecret` is v
 
 ### Admin console authentication
 
-- **Argon2id** password hashing (memory-hard, GPU-resistant)
-- **TOTP MFA** enforced after initial password change
-- **JWT cookies** — `HttpOnly`, `SameSite=Lax`; `Secure` flag when HTTPS is configured
-- **Brute force protection** — 5 failed attempts → 15-minute account lock
-- **Network** — internal ALB + WAF IP allowlist; no public path exists
+The admin console uses a self-managed authentication stack rather than a third-party identity provider. Every layer is hardened independently so that no single weakness grants access.
+
+#### Account creation and bootstrap
+
+A random one-time bootstrap password is generated automatically during CDK deployment and stored in AWS Secrets Manager (`EntraVerifiedID/{stage}/bootstrap-admin`). This password is never shown in the CDK output or logs — it must be retrieved directly from Secrets Manager by an operator with IAM access.
+
+During the onboarding wizard, the operator supplies this bootstrap token via the `X-Bootstrap-Token` request header to create the first (and only) admin account. **Immediately after the admin user is created, the bootstrap secret is permanently deleted from Secrets Manager** (`ForceDeleteWithoutRecovery=True`) — it cannot be recovered or reused. The setup endpoint is then locked permanently and cannot be called again.
+
+This means:
+- The bootstrap credential has a lifetime of minutes, not days
+- Even if it were intercepted, it is useless once setup completes
+- There is no secondary path to create admin accounts
+
+#### Password storage
+
+Passwords are hashed with **Argon2id** — the algorithm recommended by OWASP and the winner of the Password Hashing Competition. The parameters used are:
+
+| Parameter | Value | Effect |
+|---|---|---|
+| `time_cost` | 2 iterations | Controls CPU work per hash |
+| `memory_cost` | 65,536 KiB (64 MB) | Makes GPU/ASIC attacks impractical — each attempt requires 64 MB of RAM |
+| `parallelism` | 2 threads | Matches typical server core count |
+
+Each hash includes a **unique random salt** generated automatically by the library, so identical passwords produce different hash values — pre-computed rainbow table attacks do not work.
+
+The plain-text password is never written to logs, DynamoDB streams, or CloudWatch. Only the hash is persisted.
+
+#### Session management
+
+After a successful login, the server issues a signed **JWT** stored in an `HttpOnly` cookie (`vid_admin_session`):
+
+| Property | Value |
+|---|---|
+| Algorithm | HS256 — signed with a 64-byte random key stored in Secrets Manager |
+| Expiry | 8 hours |
+| Claims required | `sub`, `exp`, `iat`, unique `jti` |
+| Cookie flags | `HttpOnly`, `SameSite=Lax`; `Secure=True` when HTTPS is configured |
+
+On every authenticated request the server validates the JWT signature and expiry, then makes a **live DynamoDB lookup** to check that the account has not been disabled or locked since the token was issued. A valid JWT alone is not sufficient — the account must still be active at request time.
+
+#### Brute force protection
+
+Failed login attempts are tracked per username in DynamoDB:
+
+- After **5 consecutive failures** the account is locked for **15 minutes**
+- The lock timestamp is stored server-side — it cannot be bypassed by clearing cookies or changing IP addresses
+- On a successful login, the failed attempt counter and lock are cleared atomically
+
+#### TOTP MFA
+
+Multi-factor authentication is enforced after the first password change. The admin cannot access any protected page until a TOTP authenticator app (e.g. Microsoft Authenticator, Google Authenticator) is enrolled. MFA state is stored in the AdminUsers DynamoDB table and checked on every login.
+
+#### Network isolation
+
+The admin console has no public endpoint:
+
+- The admin ALB is **internal** (private subnets only) — it has no internet-facing listener
+- A **WAF WebACL** is associated with the ALB; the default action is `BLOCK` and only the operator-supplied VPN CIDR is allowed
+- An attacker cannot reach the login page without first being on the corporate VPN or Direct Connect network
 
 ### Lambda IAM (least privilege)
 
