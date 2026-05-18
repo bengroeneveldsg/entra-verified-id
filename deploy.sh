@@ -182,7 +182,7 @@ done < <(echo "$VPC_JSON" | jq -r '.Vpcs[] | [.VpcId, .CidrBlock, (.Tags // [] |
 [[ ${#VPC_IDS[@]} -eq 0 ]] && error "No VPCs found in $AWS_REGION"
 
 if ! $NON_INTERACTIVE; then
-  select_from_list SELECTED_LABEL "Choose VPC:" "${VPC_LABELS[@]}"
+  select_from_list SELECTED_LABEL "Choose VPC (for admin console and public frontend):" "${VPC_LABELS[@]}"
   VPC_ID=$(echo "$SELECTED_LABEL" | awk '{print $1}')
   save VPC_ID "$VPC_ID"
 else
@@ -198,9 +198,7 @@ SUBNET_JSON=$(aws ec2 describe-subnets \
   --region "$AWS_REGION" --output json)
 
 PRIVATE_SUBNET_LABELS=()
-PUBLIC_SUBNET_LABELS=()
 PRIVATE_SUBNET_IDS=()
-PUBLIC_SUBNET_IDS=()
 
 while IFS=$'\t' read -r sid az cidr tier name; do
   label="$sid  AZ: $az  CIDR: $cidr  Name: ${name:-<unnamed>}"
@@ -208,13 +206,10 @@ while IFS=$'\t' read -r sid az cidr tier name; do
     PRIVATE_SUBNET_IDS+=("$sid")
     PRIVATE_SUBNET_LABELS+=("$label")
   elif [[ "$tier" == "public" || "$tier" == "Public" ]]; then
-    PUBLIC_SUBNET_IDS+=("$sid")
-    PUBLIC_SUBNET_LABELS+=("$label")
+    : # skip public subnets — all workloads now run in private subnets
   else
     PRIVATE_SUBNET_IDS+=("$sid")
     PRIVATE_SUBNET_LABELS+=("[untagged] $label")
-    PUBLIC_SUBNET_IDS+=("$sid")
-    PUBLIC_SUBNET_LABELS+=("[untagged] $label")
   fi
 done < <(echo "$SUBNET_JSON" | jq -r '
   .Subnets[] |
@@ -228,52 +223,36 @@ done < <(echo "$SUBNET_JSON" | jq -r '
 ' | sort -k2)
 
 if ! $NON_INTERACTIVE; then
-  multiselect PRIVATE_SUBNET_IDS_STR "Private subnets (for admin ALB + Fargate tasks — choose ≥ 2 AZs):" "${PRIVATE_SUBNET_LABELS[@]}"
+  multiselect PRIVATE_SUBNET_IDS_STR "Private subnets (for admin ALB, frontend ALB, and all Fargate tasks — choose ≥ 2 AZs):" "${PRIVATE_SUBNET_LABELS[@]}"
   # Extract just the subnet IDs from the label strings
   PRIVATE_SUBNET_IDS_STR=$(echo "$PRIVATE_SUBNET_IDS_STR" | tr ',' '\n' | awk '{print $1}' | paste -sd',')
   save PRIVATE_SUBNET_IDS "$PRIVATE_SUBNET_IDS_STR"
-
-  multiselect PUBLIC_SUBNET_IDS_STR "Public subnets (for public ALB — choose ≥ 2 AZs):" "${PUBLIC_SUBNET_LABELS[@]}"
-  PUBLIC_SUBNET_IDS_STR=$(echo "$PUBLIC_SUBNET_IDS_STR" | tr ',' '\n' | awk '{print $1}' | paste -sd',')
-  save PUBLIC_SUBNET_IDS "$PUBLIC_SUBNET_IDS_STR"
-
-  echo ""
-  info "CloudFront sits in front of the public ALB, so the frontend Fargate tasks"
-  info "do not need a public IP. If your VPC has private subnets with NAT/egress,"
-  info "select them here to follow AWS best practice. Press Enter to skip (tasks"
-  info "will use the public subnets above with a public IP)."
-  echo ""
-  if [[ ${#PRIVATE_SUBNET_LABELS[@]} -gt 0 ]]; then
-    read -rp "  Use private subnets for frontend Fargate tasks? [y/N]: " use_private_frontend
-    if [[ "${use_private_frontend:-N}" =~ ^[Yy] ]]; then
-      multiselect FRONTEND_PRIVATE_SUBNET_IDS_STR "Private subnets for frontend Fargate tasks (choose ≥ 2 AZs):" "${PRIVATE_SUBNET_LABELS[@]}"
-      FRONTEND_PRIVATE_SUBNET_IDS_STR=$(echo "$FRONTEND_PRIVATE_SUBNET_IDS_STR" | tr ',' '\n' | awk '{print $1}' | paste -sd',')
-      save FRONTEND_PRIVATE_SUBNET_IDS "$FRONTEND_PRIVATE_SUBNET_IDS_STR"
-    else
-      FRONTEND_PRIVATE_SUBNET_IDS_STR=""
-      save FRONTEND_PRIVATE_SUBNET_IDS ""
-    fi
-  else
-    FRONTEND_PRIVATE_SUBNET_IDS_STR=""
-  fi
 else
   PRIVATE_SUBNET_IDS_STR="${SAVED[PRIVATE_SUBNET_IDS]:-}"
-  PUBLIC_SUBNET_IDS_STR="${SAVED[PUBLIC_SUBNET_IDS]:-}"
-  FRONTEND_PRIVATE_SUBNET_IDS_STR="${SAVED[FRONTEND_PRIVATE_SUBNET_IDS]:-}"
   [[ -z "$PRIVATE_SUBNET_IDS_STR" ]] && error "PRIVATE_SUBNET_IDS required in .deploy.env"
-  [[ -z "$PUBLIC_SUBNET_IDS_STR"  ]] && error "PUBLIC_SUBNET_IDS required in .deploy.env"
 fi
 
-success "Private subnets:          $PRIVATE_SUBNET_IDS_STR"
-success "Public subnets:            $PUBLIC_SUBNET_IDS_STR"
-[[ -n "$FRONTEND_PRIVATE_SUBNET_IDS_STR" ]] && \
-  success "Frontend private subnets: $FRONTEND_PRIVATE_SUBNET_IDS_STR" || \
-  info    "Frontend Fargate:         using public subnets (no private subnets configured)"
+success "Private subnets: $PRIVATE_SUBNET_IDS_STR"
 
 # ── Networking ─────────────────────────────────────────────────────────────────
 header "Network access"
 prompt VPN_CIDR "VPN CIDR block (who can reach the admin console, e.g. 10.0.0.0/8)" ""
 success "VPN CIDR: $VPN_CIDR"
+
+# ── CloudFront VPC Origins prefix list ────────────────────────────────────────
+header "CloudFront VPC Origins"
+info "Looking up CloudFront VPC Origins prefix list in $AWS_REGION..."
+CF_PREFIX_LIST_ID=$(aws ec2 describe-managed-prefix-lists \
+  --region "$AWS_REGION" \
+  --filters "Name=prefix-list-name,Values=com.amazonaws.global.cloudfront.origin-facing" \
+  --query 'PrefixLists[0].PrefixListId' --output text 2>/dev/null || echo "")
+if [[ -n "$CF_PREFIX_LIST_ID" && "$CF_PREFIX_LIST_ID" != "None" ]]; then
+  save CF_PREFIX_LIST_ID "$CF_PREFIX_LIST_ID"
+  success "CloudFront prefix list: $CF_PREFIX_LIST_ID"
+else
+  warn "Could not resolve CloudFront prefix list — ALB will allow all inbound on port 80 (safe: internal ALB)"
+  CF_PREFIX_LIST_ID=""
+fi
 
 # ── Domains ────────────────────────────────────────────────────────────────────
 header "Domain names"
@@ -357,7 +336,7 @@ request_cert_if_needed() {
 }
 
 request_cert_if_needed CF_CERT_ARN    "$PUBLIC_DOMAIN"  "us-east-1"     "CloudFront cert (us-east-1)"
-request_cert_if_needed REGIONAL_CERT  "$PUBLIC_DOMAIN"  "$AWS_REGION"   "Regional cert (public ALB + admin ALB)"
+request_cert_if_needed REGIONAL_CERT  "$PUBLIC_DOMAIN"  "$AWS_REGION"   "Regional cert (admin ALB)"
 # Admin domain uses the same regional cert if it's a subdomain of the same zone — otherwise request a new one
 if [[ "$ADMIN_DOMAIN" != "$PUBLIC_DOMAIN" ]]; then
   request_cert_if_needed REGIONAL_CERT "$ADMIN_DOMAIN" "$AWS_REGION" "Admin regional cert"
@@ -373,10 +352,7 @@ echo "  Region:          $AWS_REGION"
 echo "  Stage:           $STAGE"
 echo "  VPC:             $VPC_ID"
 echo "  Private subnets: $PRIVATE_SUBNET_IDS_STR"
-echo "  Public subnets:  $PUBLIC_SUBNET_IDS_STR"
-[[ -n "$FRONTEND_PRIVATE_SUBNET_IDS_STR" ]] && \
-  echo "  Frontend private: $FRONTEND_PRIVATE_SUBNET_IDS_STR" || \
-  echo "  Frontend Fargate: public subnets (no private subnets)"
+echo "  CF prefix list:  $CF_PREFIX_LIST_ID"
 echo "  VPN CIDR:        $VPN_CIDR"
 echo "  Public domain:   $PUBLIC_DOMAIN"
 echo "  Admin domain:    $ADMIN_DOMAIN"
@@ -410,29 +386,27 @@ fi
 # ── CDK context file ──────────────────────────────────────────────────────────
 CDK_CONTEXT="$SCRIPT_DIR/cdk.context.json"
 jq -n \
-  --arg vpcId                      "$VPC_ID" \
-  --arg privateSubnetIds           "$PRIVATE_SUBNET_IDS_STR" \
-  --arg publicSubnetIds            "$PUBLIC_SUBNET_IDS_STR" \
-  --arg frontendPrivateSubnetIds   "$FRONTEND_PRIVATE_SUBNET_IDS_STR" \
-  --arg vpnCidr                    "$VPN_CIDR" \
-  --arg publicDomain               "$PUBLIC_DOMAIN" \
-  --arg adminDomain                "$ADMIN_DOMAIN" \
-  --arg hostedZoneId               "$HOSTED_ZONE_ID" \
-  --arg cfCertArn                  "$CF_CERT_ARN" \
-  --arg regionalCertArn            "$REGIONAL_CERT" \
-  --arg stage                      "$STAGE" \
+  --arg adminVpcId        "$VPC_ID" \
+  --arg adminSubnetIds    "$PRIVATE_SUBNET_IDS_STR" \
+  --arg cfPrefixListId    "$CF_PREFIX_LIST_ID" \
+  --arg vpnCidr           "$VPN_CIDR" \
+  --arg publicDomain      "$PUBLIC_DOMAIN" \
+  --arg adminDomain       "$ADMIN_DOMAIN" \
+  --arg hostedZoneId      "$HOSTED_ZONE_ID" \
+  --arg cfCertArn         "$CF_CERT_ARN" \
+  --arg regionalCertArn   "$REGIONAL_CERT" \
+  --arg stage             "$STAGE" \
   '{
-    vpcId:                    $vpcId,
-    privateSubnetIds:         $privateSubnetIds,
-    publicSubnetIds:          $publicSubnetIds,
-    frontendPrivateSubnetIds: (if $frontendPrivateSubnetIds != "" then $frontendPrivateSubnetIds else null end),
-    vpnCidr:                  $vpnCidr,
-    publicDomain:             $publicDomain,
-    adminDomain:              $adminDomain,
-    hostedZoneId:             $hostedZoneId,
-    cfCertArn:                $cfCertArn,
-    regionalCertArn:          $regionalCertArn,
-    stage:                    $stage
+    adminVpcId:             $adminVpcId,
+    adminSubnetIds:         $adminSubnetIds,
+    cloudfrontPrefixListId: (if $cfPrefixListId != "" then $cfPrefixListId else null end),
+    vpnCidr:                $vpnCidr,
+    publicDomain:           $publicDomain,
+    adminDomain:            $adminDomain,
+    hostedZoneId:           $hostedZoneId,
+    cfCertArn:              $cfCertArn,
+    regionalCertArn:        $regionalCertArn,
+    stage:                  $stage
   }' > "$CDK_CONTEXT"
 success "cdk.context.json written"
 

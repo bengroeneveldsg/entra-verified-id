@@ -87,12 +87,12 @@ flowchart TD
         DX[Direct Connect /\nSite-to-Site VPN]
     end
 
-    subgraph PublicEdge["Public Edge (public subnets)"]
+    subgraph PublicEdge["Public Edge"]
         CF[CloudFront\nACM cert us-east-1]
-        PALB[Public ALB\nInternet-facing]
     end
 
     subgraph Private["Private Subnets (NAT/Cloud WAN egress)"]
+        FALB[Internal ALB\nVPC Origin]
         FG[ECS Fargate\nNginx + React SPA]
         WAF[WAF\nIP Allowlist]
         AALB[Internal ALB]
@@ -112,7 +112,7 @@ flowchart TD
         S3[(S3\nhosting bucket)]
     end
 
-    U --> CF --> PALB --> FG
+    U --> CF -- "VPC Origin" --> FALB --> FG
     FG -- "proxy /api/*" --> APIGW
     APIGW --> L1 & L2 & L3
     L1 & L2 & L3 --> DDB & SM
@@ -133,7 +133,7 @@ All infrastructure is defined as AWS CDK TypeScript. Five stacks deploy in depen
 | `EntraVid-Data-{stage}` | 5 DynamoDB tables, 3 Secrets Manager secrets, S3 hosting bucket |
 | `EntraVid-Layers-{stage}` | Lambda layer: cryptography + lxml + aws-lambda-powertools |
 | `EntraVid-MainApp-{stage}` | 6 Lambda functions + API Gateway HTTP API |
-| `EntraVid-PublicFrontend-{stage}` | ECS Fargate (private subnets when configured, else public), internet-facing ALB, CloudFront distribution |
+| `EntraVid-PublicFrontend-{stage}` | ECS Fargate + internal ALB in private subnets, CloudFront distribution with VPC Origin |
 | `EntraVid-Admin-{stage}` | ECS Fargate (private subnets), internal ALB, WAF |
 
 > **No networking resources are created by CDK.** All VPCs, subnets, NAT gateways, and routing must be pre-existing. Operators supply VPC and subnet IDs as deploy-time context parameters.
@@ -167,8 +167,7 @@ All infrastructure is defined as AWS CDK TypeScript. Five stacks deploy in depen
 
 | Resource | Requirement |
 |---|---|
-| Public subnets | ≥ 2 subnets in different AZs with an internet gateway — used for the internet-facing ALB (and frontend Fargate tasks if no private subnets are configured) |
-| Private subnets (recommended) | ≥ 2 subnets in different AZs with outbound internet access (NAT gateway or Cloud WAN) — used for admin Fargate tasks and optionally for frontend Fargate tasks (AWS best practice when CloudFront is the public entry point) |
+| Private subnets (required) | ≥ 2 subnets in different AZs with outbound internet access (NAT gateway or Cloud WAN) — used for both the admin and frontend ALBs and all Fargate tasks. Public subnets are not required. |
 | ACM certificate | Wildcard cert for your domain in `us-east-1` (for CloudFront). Regional cert optional for ALB HTTPS. |
 
 ### Required Entra configuration
