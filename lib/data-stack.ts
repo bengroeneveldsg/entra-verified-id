@@ -122,32 +122,16 @@ export class DataStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
-    // ── S3 hosting bucket ─────────────────────────────────────────────────────
-    // .well-known/* (DID config, JWKS, OIDC discovery) are publicly readable —
-    // these documents are designed to be globally accessible for DID resolution
-    // and OIDC discovery. All other objects (config.json etc.) remain private.
+    // ── S3 hosting bucket (private) ───────────────────────────────────────────
 
     this.hostingBucket = new s3.Bucket(this, 'HostingBucket', {
-      bucketName: `entra-vid-hosting-${this.account}-${stage}`,
-      blockPublicAccess: new s3.BlockPublicAccess({
-        blockPublicAcls:      true,   // No ACL-based public access
-        ignorePublicAcls:     true,
-        blockPublicPolicy:    false,  // Allow the policy below
-        restrictPublicBuckets: false,
-      }),
-      encryption:    s3.BucketEncryption.S3_MANAGED,
-      versioned:     true,
-      enforceSSL:    true,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      bucketName:          `entra-vid-hosting-${this.account}-${stage}`,
+      blockPublicAccess:   s3.BlockPublicAccess.BLOCK_ALL,
+      encryption:          s3.BucketEncryption.S3_MANAGED,
+      versioned:           true,
+      enforceSSL:          true,
+      removalPolicy:       cdk.RemovalPolicy.RETAIN,
     });
-
-    // Public read for DID/OIDC well-known documents only
-    this.hostingBucket.addToResourcePolicy(new iam.PolicyStatement({
-      sid:        'PublicReadWellKnown',
-      principals: [new iam.AnyPrincipal()],
-      actions:    ['s3:GetObject'],
-      resources:  [this.hostingBucket.arnForObjects('.well-known/*')],
-    }));
 
     // ── Outputs ──────────────────────────────────────────────────────────────
 

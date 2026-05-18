@@ -22,6 +22,8 @@ class Settings(BaseSettings):
 
     # S3
     hosting_bucket: str = ""
+    # Separate bucket for .well-known/* served via CloudFront OAC
+    well_known_bucket: str = ""
 
     # Secrets Manager secret names
     app_secret_name: str = ""
