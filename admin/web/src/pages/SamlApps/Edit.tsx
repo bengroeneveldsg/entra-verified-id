@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  Autocomplete,
   Box,
   Typography,
   TextField,
@@ -12,21 +13,18 @@ import {
   Chip,
   Divider,
   IconButton,
-  InputAdornment,
 } from '@mui/material';
 import {
   ExpandMore,
   ArrowBack,
   Warning,
-  Add,
-  Close,
 } from '@mui/icons-material';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { samlAppsApi, CreateSamlAppRequest } from '../../api/samlApps';
+import { samlAppsApi, CreateSamlAppRequest, EntraGroup } from '../../api/samlApps';
 
 const schema = z.object({
   spEntityId: z.string().min(1, 'Required'),
@@ -48,7 +46,9 @@ export function SamlAppEdit() {
   const isNew = !appId || appId === 'new';
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const [groupInput, setGroupInput] = useState('');
+  const [groupSearch, setGroupSearch] = useState('');
+  const [debouncedGroupSearch, setDebouncedGroupSearch] = useState('');
+  const [groupObjects, setGroupObjects] = useState<EntraGroup[]>([]);
   // Auto-expand and unlock the IAM section for new apps — it contains required fields
   const [dangerConfirmed, setDangerConfirmed] = useState(isNew);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +57,27 @@ export function SamlAppEdit() {
     queryKey: ['saml-app', appId],
     queryFn: () => samlAppsApi.get(appId!),
     enabled: !isNew,
+  });
+
+  // Resolve existing group IDs to display names when editing
+  const { data: resolvedGroups } = useQuery({
+    queryKey: ['resolve-groups', existing?.allowedGroupIds],
+    queryFn: () => samlAppsApi.resolveGroups(existing!.allowedGroupIds),
+    enabled: !isNew && !!existing?.allowedGroupIds?.length,
+    staleTime: 5 * 60_000,
+  });
+
+  // Debounce group search input
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedGroupSearch(groupSearch), 300);
+    return () => clearTimeout(t);
+  }, [groupSearch]);
+
+  const { data: groupOptions = [], isFetching: groupsFetching } = useQuery({
+    queryKey: ['group-search', debouncedGroupSearch],
+    queryFn: () => samlAppsApi.searchGroups(debouncedGroupSearch),
+    enabled: debouncedGroupSearch.length >= 2,
+    staleTime: 30_000,
   });
 
   const {
@@ -90,10 +111,20 @@ export function SamlAppEdit() {
         description: existing.description ?? '',
         allowedGroupIds: existing.allowedGroupIds,
       });
+      // Seed groupObjects with IDs as placeholder labels until resolvedGroups arrives
+      if (existing.allowedGroupIds?.length) {
+        setGroupObjects(existing.allowedGroupIds.map((id) => ({ id, displayName: id, description: '' })));
+      }
     }
   }, [existing, reset]);
 
-  const allowedGroupIds = watch('allowedGroupIds') ?? [];
+  // Replace placeholder labels with resolved display names once available
+  useEffect(() => {
+    if (resolvedGroups?.length) {
+      const byId = Object.fromEntries(resolvedGroups.map((g) => [g.id, g]));
+      setGroupObjects((prev) => prev.map((g) => byId[g.id] ?? g));
+    }
+  }, [resolvedGroups]);
 
   const saveMutation = useMutation({
     mutationFn: (data: FormData) => {
@@ -113,14 +144,6 @@ export function SamlAppEdit() {
   const onSubmit = (data: FormData) => {
     setError(null);
     saveMutation.mutate(data);
-  };
-
-  const addGroup = () => {
-    const trimmed = groupInput.trim();
-    if (trimmed && !allowedGroupIds.includes(trimmed)) {
-      setValue('allowedGroupIds', [...allowedGroupIds, trimmed]);
-      setGroupInput('');
-    }
   };
 
   if (!isNew && isLoading) {
@@ -198,40 +221,62 @@ export function SamlAppEdit() {
         <Divider />
 
         {/* Allowed Groups */}
-        <Box>
-          <Typography variant="subtitle2" fontWeight={600} gutterBottom>
-            Allowed Group IDs
-          </Typography>
-          <Typography variant="caption" color="text.secondary" display="block" mb={1}>
-            Only users with matching Entra group claims will be allowed. Leave empty to allow all.
-          </Typography>
-          <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
+        <Autocomplete
+          multiple
+          options={groupOptions}
+          value={groupObjects}
+          getOptionLabel={(opt) => opt.displayName || opt.id}
+          isOptionEqualToValue={(opt, val) => opt.id === val.id}
+          filterSelectedOptions
+          loading={groupsFetching}
+          onInputChange={(_, val, reason) => {
+            if (reason === 'input') setGroupSearch(val);
+          }}
+          onChange={(_, newValues) => {
+            setGroupObjects(newValues);
+            setValue('allowedGroupIds', newValues.map((g) => g.id));
+          }}
+          renderInput={(params) => (
             <TextField
-              size="small"
-              placeholder="Group Object ID"
-              value={groupInput}
-              onChange={(e) => setGroupInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addGroup())}
-              fullWidth
+              {...params}
+              label="Allowed Groups"
+              placeholder={groupObjects.length === 0 ? 'Type a group name to search…' : ''}
+              helperText="Only members of these Entra groups can log in. Leave empty to allow all verified users."
+              InputProps={{
+                ...params.InputProps,
+                endAdornment: (
+                  <>
+                    {groupsFetching && <CircularProgress size={18} />}
+                    {params.InputProps.endAdornment}
+                  </>
+                ),
+              }}
             />
-            <Button variant="outlined" startIcon={<Add />} onClick={addGroup}>
-              Add
-            </Button>
-          </Box>
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-            {allowedGroupIds.map((id) => (
+          )}
+          renderTags={(tags, getTagProps) =>
+            tags.map((option, idx) => (
               <Chip
-                key={id}
-                label={id}
-                onDelete={() =>
-                  setValue('allowedGroupIds', allowedGroupIds.filter((g) => g !== id))
-                }
+                {...getTagProps({ index: idx })}
+                key={option.id}
+                label={option.displayName || option.id}
+                title={option.id}
                 size="small"
-                sx={{ fontFamily: 'monospace' }}
+                sx={{ fontFamily: option.displayName && option.displayName !== option.id ? 'inherit' : 'monospace' }}
               />
-            ))}
-          </Box>
-        </Box>
+            ))
+          }
+          renderOption={(props, option) => (
+            <li {...props} key={option.id}>
+              <Box>
+                <Typography variant="body2">{option.displayName}</Typography>
+                {option.description && (
+                  <Typography variant="caption" color="text.secondary">{option.description}</Typography>
+                )}
+              </Box>
+            </li>
+          )}
+          noOptionsText={debouncedGroupSearch.length < 2 ? 'Type at least 2 characters to search' : 'No groups found'}
+        />
 
         <Divider />
 

@@ -43,6 +43,12 @@ export interface UpdateSamlAppRequest {
   enabled?: boolean;
 }
 
+export interface EntraGroup {
+  id: string;
+  displayName: string;
+  description: string;
+}
+
 export const samlAppsApi = {
   list: () => apiClient.get<SamlApp[]>('/saml-apps/').then((r) => r.data),
   get: (appId: string) => apiClient.get<SamlApp>(`/saml-apps/${appId}`).then((r) => r.data),
@@ -52,4 +58,8 @@ export const samlAppsApi = {
     apiClient.patch<SamlApp>(`/saml-apps/${appId}`, data).then((r) => r.data),
   delete: (appId: string) =>
     apiClient.delete(`/saml-apps/${appId}`).then((r) => r.data),
+  searchGroups: (q: string) =>
+    apiClient.get<EntraGroup[]>('/saml-apps/groups/search', { params: { q } }).then((r) => r.data),
+  resolveGroups: (ids: string[]) =>
+    apiClient.post<EntraGroup[]>('/saml-apps/groups/resolve', ids).then((r) => r.data),
 };

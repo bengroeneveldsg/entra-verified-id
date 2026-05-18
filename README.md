@@ -244,11 +244,11 @@ This app registration is used by the Lambda functions to call the Verified ID RE
    - Search for `Verifiable Credential`
    - Select **Verifiable Credentials Service Request**
    - Add application permission: `VerifiableCredential.Create.All`
-5. **If you intend to restrict any SAML application to specific Entra groups** — also add a Microsoft Graph permission:
+5. **If you intend to restrict any SAML application to specific Entra groups** — also add two Microsoft Graph permissions:
    - **API permissions → Add a permission → Microsoft Graph → Application permissions**
-   - Search for and add: `GroupMember.Read.All`
-   - This allows the Lambda to call the Graph API `checkMemberObjects` endpoint to verify group membership at login time
-   - If you do not plan to use group-based access control on any SAML app, this permission is not required
+   - Search for and add: `GroupMember.Read.All` — allows the Lambda to verify group membership at login time
+   - Search for and add: `Group.Read.All` — allows the admin console to search and resolve group names by display name (so you never need to manually copy Object IDs from the Azure Portal)
+   - If you do not plan to use group-based access control on any SAML app, these permissions are not required
 6. **Grant admin consent** — click **Grant admin consent for {organisation}** and confirm all permissions
 
 > `VerifiableCredential.Create.All` is always required. `GroupMember.Read.All` is only needed if you configure `allowedGroupIds` on one or more SAML applications — the Lambda will call the Microsoft Graph API to verify the authenticated user is in at least one of the permitted groups before issuing the SAML assertion.
@@ -686,11 +686,12 @@ The check **fails closed** — if the Graph API call fails for any reason (netwo
 
 **Configuring group access on a SAML app:**
 
-1. In the Azure Portal, find the group(s) you want to allow: **Entra ID → Groups → {group} → Overview** — copy the **Object ID** (a UUID)
-2. In the admin console, open the SAML app and add the group Object IDs to the **Allowed Group IDs** field (one per line)
-3. Ensure the IssuerVerifier app registration has `GroupMember.Read.All` with admin consent granted (see [Step 3 of Entra configuration](#step-3--create-the-issuerverifier-app-registration))
+1. In the admin console, open the SAML app (create or edit)
+2. In the **Allowed Groups** field, start typing a group name — the field searches Entra in real time via the Microsoft Graph API and shows matching groups with their descriptions
+3. Select the groups you want to permit; they appear as chips. Hover a chip to see the underlying Object ID.
+4. Ensure the IssuerVerifier app registration has both `GroupMember.Read.All` and `Group.Read.All` with admin consent granted (see [Step 3 of Entra configuration](#step-3--create-the-issuerverifier-app-registration))
 
-> The same `clientId` and `clientSecret` from the IssuerVerifier app registration are used for both Verified ID API calls and Graph API group checks — no additional app registration is required.
+> No Azure Portal access is needed to configure group restrictions — the admin console resolves group names directly. The same `clientId` and `clientSecret` from the IssuerVerifier app registration are used for both Verified ID API calls and all Graph API operations.
 
 ---
 
