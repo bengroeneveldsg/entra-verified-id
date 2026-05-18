@@ -24,6 +24,9 @@ interface AdminStackProps extends cdk.StackProps {
   bootstrapSecret:  secretsmanager.Secret;
   jwtSecret:        secretsmanager.Secret;
   hostingBucket:    s3.Bucket;
+  // Separate private bucket for .well-known/* files served via CloudFront OAC.
+  // Admin writes DID/JWKS/OIDC docs here; CloudFront serves them to the public.
+  wellKnownBucket?: s3.IBucket;
   vpnCidr:          string;
   // Optional — omit for no-custom-domain test deployment
   adminDomain?:     string;
@@ -41,7 +44,7 @@ export class AdminStack extends cdk.Stack {
     });
     const {
       stage, adminVpcId, adminSubnetIds,
-      tables, appSecret, bootstrapSecret, jwtSecret, hostingBucket,
+      tables, appSecret, bootstrapSecret, jwtSecret, hostingBucket, wellKnownBucket,
       adminDomain, hostedZoneId, regionalCertArn, vpnCidr,
     } = props;
 
@@ -125,6 +128,12 @@ export class AdminStack extends cdk.Stack {
     hostingBucket.grantPut(taskRole, 'config.json');
     hostingBucket.grantRead(taskRole);
 
+    // Grant write to the well-known bucket so admin can publish DID/JWKS/OIDC docs
+    // for CloudFront to serve via OAC (separate from the hosting bucket used by Lambda).
+    if (wellKnownBucket) {
+      wellKnownBucket.grantPut(taskRole, '.well-known/*');
+    }
+
     taskRole.addToPolicy(new iam.PolicyStatement({
       actions:   ['logs:StartQuery', 'logs:GetQueryResults', 'logs:DescribeLogGroups'],
       resources: ['*'],
@@ -182,6 +191,7 @@ export class AdminStack extends cdk.Stack {
         ADMIN_USERS_TABLE:     tables.adminUsers.tableName,
         AUDIT_LOG_TABLE:       tables.auditLog.tableName,
         HOSTING_BUCKET:        hostingBucket.bucketName,
+        WELL_KNOWN_BUCKET:     wellKnownBucket?.bucketName ?? '',
         APP_SECRET_NAME:       appSecret.secretName,
         JWT_SECRET_NAME:       jwtSecret.secretName,
         BOOTSTRAP_SECRET_NAME: bootstrapSecret.secretName,

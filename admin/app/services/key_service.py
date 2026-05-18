@@ -120,13 +120,18 @@ def _build_oidc_config(base_url: str, kid: str) -> dict:
 
 
 def _upload_to_s3(key: str, body: str) -> None:
-    s3_client.put_object(
-        Bucket=settings.hosting_bucket,
+    payload = dict(
         Key=key,
         Body=body.encode(),
         ContentType="application/json",
         CacheControl="no-store",
     )
+    s3_client.put_object(Bucket=settings.hosting_bucket, **payload)
+    # Dual-write to the well-known bucket so CloudFront OAC can serve the files.
+    # The hosting bucket is read directly by Lambda via IAM; this bucket is the
+    # CloudFront origin for public-facing .well-known/* endpoints.
+    if settings.well_known_bucket:
+        s3_client.put_object(Bucket=settings.well_known_bucket, **payload)
 
 
 def _get_current_secret() -> dict:

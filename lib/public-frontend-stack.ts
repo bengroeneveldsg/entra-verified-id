@@ -34,6 +34,7 @@ interface PublicFrontendStackProps extends cdk.StackProps {
 
 export class PublicFrontendStack extends cdk.Stack {
   public readonly distributionDomain: string;
+  public readonly wellKnownBucket:    s3.Bucket;
 
   constructor(scope: Construct, id: string, props: PublicFrontendStackProps) {
     super(scope, id, {
@@ -45,6 +46,18 @@ export class PublicFrontendStack extends cdk.Stack {
       apiUrl, hostingBucket, publicDomain, hostedZoneId,
       cfCertArn, cloudfrontPrefixListId, assignPublicIp = true,
     } = props;
+
+    // ── Well-known bucket — private S3 bucket in this stack for .well-known/* ──
+    // OAC and bucket live in the same stack so there is no cyclic cross-stack
+    // dependency. The admin writes DID/JWKS/OIDC docs to both this bucket (served
+    // via CloudFront OAC) and the hosting bucket (read directly by Lambda via IAM).
+    this.wellKnownBucket = new s3.Bucket(this, 'WellKnownBucket', {
+      bucketName:        `entra-vid-well-known-${this.account}-${stage}`,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption:        s3.BucketEncryption.S3_MANAGED,
+      enforceSSL:        true,
+      removalPolicy:     cdk.RemovalPolicy.RETAIN,
+    });
 
     // hasCfDomain: CloudFront gets a custom domain + cert (us-east-1 cert sufficient)
     const hasCfDomain = !!(publicDomain && cfCertArn);
@@ -180,15 +193,10 @@ export class PublicFrontendStack extends cdk.Stack {
       httpPort:       80,
     });
 
-    // S3 origin for /.well-known/* — served directly by CloudFront from S3.
-    // The .well-known files (DID config, JWKS, OIDC discovery) are publicly
-    // readable in S3 by design; no OAC needed. This avoids a CDK cyclic
-    // dependency that arises when S3BucketOrigin.withOriginAccessControl()
-    // creates the OAC in DataStack and then writes the distribution ARN back.
-    const s3WellKnownOrigin = new origins.HttpOrigin(
-      `${hostingBucket.bucketName}.s3.${this.region}.amazonaws.com`,
-      { protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY },
-    );
+    // OAC origin for /.well-known/* — bucket and distribution are in the same
+    // stack so there is no cyclic dependency. CloudFront signs S3 requests with
+    // SigV4; the bucket stays fully private (BLOCK_ALL).
+    const s3WellKnownOrigin = origins.S3BucketOrigin.withOriginAccessControl(this.wellKnownBucket);
 
     const distribution = new cloudfront.Distribution(this, 'Distribution', {
       comment:     `EntraVerifiedID ${stage} public frontend`,

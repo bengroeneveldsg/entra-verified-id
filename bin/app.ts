@@ -94,17 +94,19 @@ const adminStack = new AdminStack(app, `EntraVid-Admin-${stage}`, {
   stage,
   adminVpcId,
   adminSubnetIds,
-  tables:          dataStack.tables,
-  appSecret:       dataStack.appSecret,
-  bootstrapSecret: dataStack.bootstrapAdminSecret,
-  jwtSecret:       dataStack.jwtSigningSecret,
-  hostingBucket:   dataStack.hostingBucket,
+  tables:           dataStack.tables,
+  appSecret:        dataStack.appSecret,
+  bootstrapSecret:  dataStack.bootstrapAdminSecret,
+  jwtSecret:        dataStack.jwtSigningSecret,
+  hostingBucket:    dataStack.hostingBucket,
+  wellKnownBucket:  publicFrontendStack.wellKnownBucket,
   adminDomain,
   hostedZoneId,
   regionalCertArn,
   vpnCidr,
 });
 adminStack.addDependency(dataStack);
+adminStack.addDependency(publicFrontendStack);
 
 cdk.Tags.of(app).add('Project', 'EntraVerifiedID');
 cdk.Tags.of(app).add('Stage', stage);
