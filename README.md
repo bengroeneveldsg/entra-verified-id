@@ -1,5 +1,7 @@
 # Entra Verified ID
 
+> **Disclaimer:** This project is not an official AWS product, service, or solution. It is an independent example implementation intended to demonstrate what is possible when combining AWS infrastructure with Microsoft Entra Verified ID. It is provided as a starting point to learn from, adapt, and iterate on — not as a supported or production-certified offering. Use it at your own discretion and always validate it against your organisation's security, compliance, and operational requirements before deploying to production.
+
 A production-ready AWS deployment that enables **passwordless QR-code authentication** using Microsoft Entra Verified ID. Users authenticate by scanning a QR code with Microsoft Authenticator and presenting a VerifiedEmployee digital credential — no password, no OTP, no phishing risk.
 
 ---
