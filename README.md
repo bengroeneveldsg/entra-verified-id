@@ -167,8 +167,8 @@ All infrastructure is defined as AWS CDK TypeScript. Five stacks deploy in depen
 
 | Resource | Requirement |
 |---|---|
-| VPC with internet gateway (frontend) | CloudFront VPC Origin requires the target VPC to have an IGW attached. The frontend internal ALB and Fargate tasks live here. If the VPC only has public subnets, Fargate tasks need a public IP for ECR pulls; adding private subnets with NAT removes that requirement. |
-| Private subnets with egress (admin) | ≥ 2 subnets in different AZs with outbound internet access (NAT gateway or Cloud WAN) — used for the admin internal ALB and Fargate tasks. |
+| VPC with internet gateway | Both the admin and frontend stacks use the same VPC. An internet gateway must be attached — CloudFront VPC Origin uses it to reach the internal ALBs over the AWS backbone (traffic never traverses the public internet). |
+| Private subnets (≥ 2 AZs) | Both ALBs and all Fargate tasks run in private subnets with outbound internet access (NAT gateway or Cloud WAN) for ECR image pulls. |
 | ACM certificate | Wildcard cert for your domain in `us-east-1` (for CloudFront). No regional cert needed — both ALBs are HTTP-only internally; TLS terminates at CloudFront. |
 
 ### Required Entra configuration
