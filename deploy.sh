@@ -252,7 +252,7 @@ done < <(echo "$SUBNET_JSON" | jq -r '
 if ! $NON_INTERACTIVE; then
   multiselect PRIVATE_SUBNET_IDS_STR "Private subnets (for admin ALB, frontend ALB, and all Fargate tasks — choose ≥ 2 AZs):" "${PRIVATE_SUBNET_LABELS[@]}"
   # Extract just the subnet IDs from the label strings
-  PRIVATE_SUBNET_IDS_STR=$(echo "$PRIVATE_SUBNET_IDS_STR" | tr ',' '\n' | awk '{print $1}' | tr '\n' ',' | sed 's/,$//')
+  PRIVATE_SUBNET_IDS_STR=$(echo "$PRIVATE_SUBNET_IDS_STR" | tr ',' '\n' | grep -oE 'subnet-[a-z0-9]+' | tr '\n' ',' | sed 's/,$//')
   save PRIVATE_SUBNET_IDS "$PRIVATE_SUBNET_IDS_STR"
 else
   PRIVATE_SUBNET_IDS_STR="$(_saved_get PRIVATE_SUBNET_IDS)"
