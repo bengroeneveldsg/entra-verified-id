@@ -477,6 +477,11 @@ success "cdk.context.json written"
 # ── Install npm deps ──────────────────────────────────────────────────────────
 header "Installing dependencies"
 cd "$SCRIPT_DIR"
+# On CloudShell the home dir is only 1 GB — redirect npm cache to /tmp to avoid filling it
+if [[ "${AWS_EXECUTION_ENV:-}" == "CloudShell" ]]; then
+  export npm_config_cache=/tmp/npm-cache
+  info "CloudShell: npm cache redirected to /tmp"
+fi
 npm install --prefer-offline 2>&1 | tail -3
 
 # ── CDK bootstrap check ───────────────────────────────────────────────────────
