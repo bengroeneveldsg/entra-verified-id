@@ -241,8 +241,8 @@ success "Private subnets: $PRIVATE_SUBNET_IDS_STR"
 
 # ── Networking ─────────────────────────────────────────────────────────────────
 header "Network access"
-prompt VPN_CIDR "VPN CIDR block (who can reach the admin console, e.g. 10.0.0.0/8)" ""
-success "VPN CIDR: $VPN_CIDR"
+prompt VPN_CIDR "Internal network CIDR (who can reach the admin console, e.g. 10.0.0.0/8)" ""
+success "Internal CIDR: $VPN_CIDR"
 
 # ── CloudFront VPC Origins prefix list ────────────────────────────────────────
 header "CloudFront VPC Origins"
@@ -411,7 +411,7 @@ echo "  Stage:           $STAGE"
 echo "  VPC:             $VPC_ID"
 echo "  Private subnets: $PRIVATE_SUBNET_IDS_STR"
 echo "  CF prefix list:  $CF_PREFIX_LIST_ID"
-echo "  VPN CIDR:        $VPN_CIDR"
+echo "  Internal CIDR:   $VPN_CIDR"
 echo "  Public domain:   $PUBLIC_DOMAIN"
 echo "  Admin domain:    ${ADMIN_DOMAIN:-(none - HTTP only via ALB DNS)}"
 echo "  Hosted zone:     ${HOSTED_ZONE_ID:-(none - manual DNS)}"
@@ -482,7 +482,7 @@ if [[ "${AWS_EXECUTION_ENV:-}" == "CloudShell" ]]; then
   export npm_config_cache=/tmp/npm-cache
   info "CloudShell: npm cache redirected to /tmp"
 fi
-npm install --prefer-offline 2>&1 | tail -3
+npm install --prefer-offline 2>&1 | tail -20
 
 # ── CDK bootstrap check ───────────────────────────────────────────────────────
 header "CDK bootstrap"
@@ -528,7 +528,7 @@ if [[ -f "$SCRIPT_DIR/cdk-outputs.json" ]]; then
 
   success "Public URL:   $PUBLIC_URL"
   success "API URL:      $API_URL"
-  success "Admin URL:    $ADMIN_URL (accessible from VPN: $VPN_CIDR)"
+  success "Admin URL:    $ADMIN_URL (accessible from internal network: $VPN_CIDR)"
 
   if [[ -z "$HOSTED_ZONE_ID" ]]; then
     CF_DOMAIN=$(jq -r ".[\"EntraVid-PublicFrontend-${STAGE}\"].DistributionDomain // \"\"" "$SCRIPT_DIR/cdk-outputs.json")
@@ -544,7 +544,7 @@ if [[ -f "$SCRIPT_DIR/cdk-outputs.json" ]]; then
 
   echo ""
   echo -e "${BOLD}  Next step — initial admin login:${RESET}"
-  echo "  1. Connect to your VPN ($VPN_CIDR)"
+  echo "  1. Connect from your internal network ($VPN_CIDR)"
   echo "  2. Open $ADMIN_URL in your browser"
   echo "  3. Use these one-time bootstrap credentials:"
   echo ""
