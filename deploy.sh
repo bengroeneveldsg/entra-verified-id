@@ -43,7 +43,7 @@ _saved_set() {
   _SAVED_KEYS+=("$key")
 }
 
-_saved_get() { local ref="DEPLOY_SAVED_${1}"; echo "${!ref}"; }
+_saved_get() { local ref="DEPLOY_SAVED_${1}"; echo "${!ref:-}"; }
 
 _saved_has() {
   local key="$1" k
