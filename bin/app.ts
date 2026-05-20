@@ -50,6 +50,7 @@ const adminDomain     = ctx('adminDomain');
 const hostedZoneId    = ctx('hostedZoneId');
 const cfCertArn       = ctx('cfCertArn');
 const regionalCertArn = ctx('regionalCertArn');
+const adminCertArn    = ctx('adminCertArn') ?? regionalCertArn;
 
 const env: cdk.Environment = {
   account: process.env.CDK_DEFAULT_ACCOUNT,
@@ -102,7 +103,7 @@ const adminStack = new AdminStack(app, `EntraVid-Admin-${stage}`, {
   wellKnownBucket:  publicFrontendStack.wellKnownBucket,
   adminDomain,
   hostedZoneId,
-  regionalCertArn,
+  regionalCertArn: adminCertArn,
   vpnCidr,
 });
 adminStack.addDependency(dataStack);
