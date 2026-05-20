@@ -380,19 +380,28 @@ request_cert_if_needed() {
   fi
 }
 
-request_cert_if_needed CF_CERT_ARN   "$PUBLIC_DOMAIN" "us-east-1"   "CloudFront cert (us-east-1)"
-request_cert_if_needed REGIONAL_CERT "$PUBLIC_DOMAIN" "$AWS_REGION" "Regional cert"
+request_cert_if_needed CF_CERT_ARN "$PUBLIC_DOMAIN" "us-east-1" "CloudFront cert (us-east-1)"
 
+# Regional cert only needed when there is a hosted zone (API CNAME record) or an admin domain with HTTPS
+REGIONAL_CERT=""
 ADMIN_CERT_ARN=""
-if [[ -n "$ADMIN_DOMAIN" && "$ADMIN_DOMAIN" != "$PUBLIC_DOMAIN" ]]; then
-  request_cert_if_needed ADMIN_CERT_ARN "$ADMIN_DOMAIN" "$AWS_REGION" "Admin domain cert"
-elif [[ -n "$ADMIN_DOMAIN" ]]; then
-  ADMIN_CERT_ARN="$REGIONAL_CERT"
+if [[ -n "$ADMIN_DOMAIN" ]]; then
+  if [[ "$ADMIN_DOMAIN" == "$PUBLIC_DOMAIN" ]]; then
+    request_cert_if_needed REGIONAL_CERT  "$PUBLIC_DOMAIN" "$AWS_REGION" "Regional cert (public + admin domain)"
+    ADMIN_CERT_ARN="$REGIONAL_CERT"
+  else
+    [[ -n "$HOSTED_ZONE_ID" ]] && request_cert_if_needed REGIONAL_CERT "$PUBLIC_DOMAIN" "$AWS_REGION" "Regional cert (public domain)"
+    request_cert_if_needed ADMIN_CERT_ARN "$ADMIN_DOMAIN"  "$AWS_REGION" "Admin domain cert"
+  fi
+elif [[ -n "$HOSTED_ZONE_ID" ]]; then
+  request_cert_if_needed REGIONAL_CERT "$PUBLIC_DOMAIN" "$AWS_REGION" "Regional cert (API DNS record)"
+else
+  info "No admin domain and no hosted zone — regional cert not needed, skipping."
 fi
 
 success "CloudFront cert:  $CF_CERT_ARN"
-success "Regional cert:    $REGIONAL_CERT"
-[[ -n "$ADMIN_DOMAIN" ]] && success "Admin cert:       $ADMIN_CERT_ARN" || info "Admin cert:       none (HTTP only)"
+[[ -n "$REGIONAL_CERT" ]]  && success "Regional cert:    $REGIONAL_CERT"  || true
+[[ -n "$ADMIN_DOMAIN" ]]   && success "Admin cert:       $ADMIN_CERT_ARN" || info "Admin cert:       none (HTTP only)"
 
 # ── Summary & confirmation ─────────────────────────────────────────────────────
 header "Summary"
