@@ -264,10 +264,10 @@ header "Domain names"
 prompt PUBLIC_DOMAIN  "Public-facing domain (e.g. vid.example.com)"          ""
 prompt ADMIN_DOMAIN   "Internal admin domain (e.g. admin.example.com)" ""
 
-# ── Route 53 hosted zone ───────────────────────────────────────────────────────
-header "Route 53"
-info "Fetching hosted zones..."
-ZONE_JSON=$(aws route53 list-hosted-zones --output json)
+# ── Route 53 hosted zone (optional) ──────────────────────────────────────────
+header "Route 53 (optional)"
+info "Fetching hosted zones in this account..."
+ZONE_JSON=$(aws route53 list-hosted-zones --output json 2>/dev/null || echo '{"HostedZones":[]}')
 ZONE_IDS=(); ZONE_LABELS=()
 while IFS=$'\t' read -r zone_id zone_name; do
   zone_id="${zone_id##*/}"   # strip /hostedzone/ prefix
@@ -275,17 +275,32 @@ while IFS=$'\t' read -r zone_id zone_name; do
   ZONE_LABELS+=("$zone_id  $zone_name")
 done < <(echo "$ZONE_JSON" | jq -r '.HostedZones[] | [.Id, .Name] | @tsv')
 
-[[ ${#ZONE_IDS[@]} -eq 0 ]] && error "No hosted zones found in your account. Create one first."
+HOSTED_ZONE_ID="${SAVED[HOSTED_ZONE_ID]:-}"
 
 if ! $NON_INTERACTIVE; then
-  select_from_list SELECTED_ZONE "Choose the Route 53 zone for DNS validation of ACM certs + DNS records:" "${ZONE_LABELS[@]}"
-  HOSTED_ZONE_ID=$(echo "$SELECTED_ZONE" | awk '{print $1}')
-  save HOSTED_ZONE_ID "$HOSTED_ZONE_ID"
-else
-  HOSTED_ZONE_ID="${SAVED[HOSTED_ZONE_ID]:-}"
-  [[ -z "$HOSTED_ZONE_ID" ]] && error "HOSTED_ZONE_ID required in .deploy.env"
+  if [[ ${#ZONE_IDS[@]} -eq 0 ]]; then
+    warn "No hosted zones found in this account — DNS records must be added manually after deploy."
+    HOSTED_ZONE_ID=""
+    save HOSTED_ZONE_ID ""
+  else
+    read -rp "  Use Route 53 in this account for automatic DNS + cert validation? [Y/n]: " use_r53
+    if [[ "${use_r53:-Y}" =~ ^[Yy] ]]; then
+      select_from_list SELECTED_ZONE "Choose Route 53 hosted zone:" "${ZONE_LABELS[@]}"
+      HOSTED_ZONE_ID=$(echo "$SELECTED_ZONE" | awk '{print $1}')
+      save HOSTED_ZONE_ID "$HOSTED_ZONE_ID"
+    else
+      HOSTED_ZONE_ID=""
+      save HOSTED_ZONE_ID ""
+      info "DNS records will need to be created manually — values shown after cert requests and after deploy."
+    fi
+  fi
 fi
-success "Hosted zone: $HOSTED_ZONE_ID"
+
+if [[ -n "$HOSTED_ZONE_ID" ]]; then
+  success "Hosted zone: $HOSTED_ZONE_ID"
+else
+  warn "No hosted zone — proceeding without automatic DNS management."
+fi
 
 # ── ACM certificates ───────────────────────────────────────────────────────────
 header "ACM certificates"
@@ -310,8 +325,7 @@ request_cert_if_needed() {
         --region "$region" \
         --output text \
         --query 'CertificateArn' 2>&1)
-      warn "Certificate requested: $cert_arn"
-      warn "Writing DNS validation records to Route 53 zone $HOSTED_ZONE_ID ..."
+      info "Certificate ARN: $cert_arn"
 
       sleep 3  # Give ACM a moment to generate the validation options
       VALIDATION=$(aws acm describe-certificate --certificate-arn "$cert_arn" \
@@ -321,16 +335,33 @@ request_cert_if_needed() {
       VAL_VALUE=$(echo "$VALIDATION" | jq -r '.Value')
 
       if [[ -n "$VAL_NAME" && "$VAL_NAME" != "null" ]]; then
-        aws route53 change-resource-record-sets \
-          --hosted-zone-id "$HOSTED_ZONE_ID" \
-          --change-batch "{\"Changes\":[{\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"$VAL_NAME\",\"Type\":\"CNAME\",\"TTL\":300,\"ResourceRecords\":[{\"Value\":\"$VAL_VALUE\"}]}}]}" \
-          --output text --query 'ChangeInfo.Status' >/dev/null
-        info "DNS record written. Waiting for cert to issue (may take 2-5 min)..."
-        aws acm wait certificate-validated --certificate-arn "$cert_arn" --region "$region" && \
-          success "Certificate issued: $cert_arn" || \
-          warn "Cert validation timeout — check AWS console and re-run deploy.sh"
+        if [[ -n "$HOSTED_ZONE_ID" ]]; then
+          warn "Writing DNS validation record to Route 53 zone $HOSTED_ZONE_ID ..."
+          aws route53 change-resource-record-sets \
+            --hosted-zone-id "$HOSTED_ZONE_ID" \
+            --change-batch "{\"Changes\":[{\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"$VAL_NAME\",\"Type\":\"CNAME\",\"TTL\":300,\"ResourceRecords\":[{\"Value\":\"$VAL_VALUE\"}]}}]}" \
+            --output text --query 'ChangeInfo.Status' >/dev/null
+          info "DNS record written. Waiting for cert to issue (may take 2-5 min)..."
+          aws acm wait certificate-validated --certificate-arn "$cert_arn" --region "$region" && \
+            success "Certificate issued: $cert_arn" || \
+            warn "Cert validation timeout — check AWS console and re-run deploy.sh"
+        else
+          echo ""
+          echo -e "${BOLD}  ── Manual DNS validation required ──────────────────────────────${RESET}"
+          echo "  Add this CNAME record to your DNS provider, then press Enter:"
+          echo ""
+          echo "    Name:  $VAL_NAME"
+          echo "    Type:  CNAME"
+          echo "    Value: $VAL_VALUE"
+          echo ""
+          read -rp "  Press Enter once the CNAME record is live (Ctrl+C to pause and re-run later): "
+          info "Waiting for ACM to validate $domain (may take 2-5 min after DNS propagates)..."
+          aws acm wait certificate-validated --certificate-arn "$cert_arn" --region "$region" && \
+            success "Certificate issued: $cert_arn" || \
+            warn "Cert validation timeout — DNS may still be propagating. Re-run deploy.sh to retry."
+        fi
       else
-        warn "Could not auto-write validation record — do it manually in ACM console then re-run."
+        warn "Could not retrieve validation record yet — check ACM console for $cert_arn and add the CNAME manually."
       fi
     fi
     save "$varname" "$cert_arn"
@@ -469,6 +500,19 @@ if [[ -f "$SCRIPT_DIR/cdk-outputs.json" ]]; then
   success "Public URL:   $PUBLIC_URL"
   success "API URL:      $API_URL"
   success "Admin URL:    $ADMIN_URL (accessible from VPN: $VPN_CIDR)"
+
+  if [[ -z "$HOSTED_ZONE_ID" ]]; then
+    CF_DOMAIN=$(jq -r ".[\"EntraVid-PublicFrontend-${STAGE}\"].DistributionDomain // \"\"" "$SCRIPT_DIR/cdk-outputs.json")
+    ADMIN_ALB=$(jq -r ".[\"EntraVid-Admin-${STAGE}\"].AdminAlbDns               // \"\"" "$SCRIPT_DIR/cdk-outputs.json")
+    echo ""
+    echo -e "${BOLD}${YELLOW}  ── Manual DNS records required ──────────────────────────────────${RESET}"
+    echo "  Add these records to your DNS provider:"
+    echo ""
+    [[ -n "$CF_DOMAIN" ]]   && echo "    $PUBLIC_DOMAIN  →  ALIAS/CNAME  →  $CF_DOMAIN"
+    [[ -n "$ADMIN_ALB" ]]   && echo "    $ADMIN_DOMAIN   →  ALIAS/CNAME  →  $ADMIN_ALB"
+    echo ""
+  fi
+
   echo ""
   echo -e "${BOLD}  Next step — initial admin login:${RESET}"
   echo "  1. Connect to your VPN ($VPN_CIDR)"
