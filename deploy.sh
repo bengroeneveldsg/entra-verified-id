@@ -32,24 +32,45 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/.deploy.env"
 
-# ── Load cached answers ───────────────────────────────────────────────────────
-declare -A SAVED
+# ── Load cached answers (bash 3.2-compatible — no associative arrays) ──────────
+# Keys are tracked in a plain array; values stored as DEPLOY_SAVED_<KEY> vars.
+_SAVED_KEYS=()
+
+_saved_set() {
+  local key="$1" val="$2"
+  printf -v "DEPLOY_SAVED_${key}" '%s' "$val"
+  local k; for k in "${_SAVED_KEYS[@]:-}"; do [[ "$k" == "$key" ]] && return; done
+  _SAVED_KEYS+=("$key")
+}
+
+_saved_get() { local ref="DEPLOY_SAVED_${1}"; echo "${!ref}"; }
+
+_saved_has() {
+  local key="$1" k
+  for k in "${_SAVED_KEYS[@]:-}"; do [[ "$k" == "$key" ]] && return 0; done
+  return 1
+}
+
 if [[ -f "$ENV_FILE" ]]; then
-  while IFS='=' read -r key val; do
-    [[ "$key" =~ ^# ]] && continue
-    [[ -z "$key" ]]    && continue
-    SAVED["$key"]="$val"
+  while IFS= read -r line; do
+    [[ "$line" =~ ^# ]] && continue
+    [[ -z "$line" ]]    && continue
+    local_key="${line%%=*}"
+    local_val="${line#*=}"
+    [[ -z "$local_key" ]] && continue
+    _saved_set "$local_key" "$local_val"
   done < "$ENV_FILE"
 fi
 
-save() { SAVED["$1"]="$2"; }
+save() { _saved_set "$1" "$2"; }
 
 flush_env() {
   {
     echo "# Entra Verified ID v2 deploy configuration — DO NOT COMMIT"
     echo "# Generated $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-    for key in "${!SAVED[@]}"; do
-      echo "$key=${SAVED[$key]}"
+    local k
+    for k in "${_SAVED_KEYS[@]:-}"; do
+      echo "${k}=$(_saved_get "$k")"
     done
   } > "$ENV_FILE"
   chmod 600 "$ENV_FILE"
@@ -59,13 +80,14 @@ flush_env() {
 prompt() {
   local varname="$1" label="$2" default="${3:-}"
   if $NON_INTERACTIVE; then
-    [[ -n "${SAVED[$varname]+x}" ]] || error "$label is required (set in .deploy.env as $varname=)"
-    eval "$varname=\"${SAVED[$varname]}\""
+    _saved_has "$varname" || error "$label is required (set in .deploy.env as $varname=)"
+    printf -v "$varname" '%s' "$(_saved_get "$varname")"
     return
   fi
   local shown_default=""
-  [[ -n "${SAVED[$varname]+x}" ]] && shown_default="${SAVED[$varname]}"
+  _saved_has "$varname" && shown_default="$(_saved_get "$varname")"
   [[ -n "$default" && -z "$shown_default" ]] && shown_default="$default"
+  local input
   if [[ -n "$shown_default" ]]; then
     read -rp "  ${label} [${shown_default}]: " input
     input="${input:-$shown_default}"
@@ -76,7 +98,7 @@ prompt() {
       read -rp "  ${label}: " input
     done
   fi
-  eval "$varname=\"$input\""
+  printf -v "$varname" '%s' "$input"
   save "$varname" "$input"
 }
 
@@ -191,7 +213,7 @@ if ! $NON_INTERACTIVE; then
   VPC_ID=$(echo "$SELECTED_LABEL" | awk '{print $1}')
   save VPC_ID "$VPC_ID"
 else
-  VPC_ID="${SAVED[VPC_ID]:-}"
+  VPC_ID="$(_saved_get VPC_ID)"
   [[ -z "$VPC_ID" ]] && error "VPC_ID required in .deploy.env"
 fi
 
@@ -233,7 +255,7 @@ if ! $NON_INTERACTIVE; then
   PRIVATE_SUBNET_IDS_STR=$(echo "$PRIVATE_SUBNET_IDS_STR" | tr ',' '\n' | awk '{print $1}' | paste -sd',')
   save PRIVATE_SUBNET_IDS "$PRIVATE_SUBNET_IDS_STR"
 else
-  PRIVATE_SUBNET_IDS_STR="${SAVED[PRIVATE_SUBNET_IDS]:-}"
+  PRIVATE_SUBNET_IDS_STR="$(_saved_get PRIVATE_SUBNET_IDS)"
   [[ -z "$PRIVATE_SUBNET_IDS_STR" ]] && error "PRIVATE_SUBNET_IDS required in .deploy.env"
 fi
 
@@ -270,7 +292,7 @@ if ! $NON_INTERACTIVE; then
     info "No admin domain — admin console will be HTTP only, reachable via ALB DNS name from VPN. You can CNAME a domain to it later."
   fi
 else
-  ADMIN_DOMAIN="${SAVED[ADMIN_DOMAIN]:-}"
+  ADMIN_DOMAIN="$(_saved_get ADMIN_DOMAIN)"
 fi
 
 # ── Route 53 hosted zone (optional) ──────────────────────────────────────────
@@ -284,7 +306,7 @@ while IFS=$'\t' read -r zone_id zone_name; do
   ZONE_LABELS+=("$zone_id  $zone_name")
 done < <(echo "$ZONE_JSON" | jq -r '.HostedZones[] | [.Id, .Name] | @tsv')
 
-HOSTED_ZONE_ID="${SAVED[HOSTED_ZONE_ID]:-}"
+HOSTED_ZONE_ID="$(_saved_get HOSTED_ZONE_ID)"
 
 if ! $NON_INTERACTIVE; then
   if [[ ${#ZONE_IDS[@]} -eq 0 ]]; then
@@ -316,7 +338,7 @@ header "ACM certificates"
 
 request_cert_if_needed() {
   local varname="$1" domain="$2" region="$3" label="$4"
-  local existing="${SAVED[$varname]:-}"
+  local existing; existing="$(_saved_get "$varname")"
 
   if [[ -n "$existing" ]]; then
     info "$label: using cached ARN $existing"
