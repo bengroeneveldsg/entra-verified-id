@@ -142,15 +142,20 @@ success "Tools OK (aws, node v$(node --version), docker, jq)"
 # ── AWS profile & identity ────────────────────────────────────────────────────
 header "AWS credentials"
 
-if ! $NON_INTERACTIVE; then
-  AVAILABLE_PROFILES=$(aws configure list-profiles 2>/dev/null | tr '\n' ' ' || echo "default")
-  info "Available AWS profiles: $AVAILABLE_PROFILES"
+# CloudShell provides ambient credentials via env vars — no profile needed
+if [[ "${AWS_EXECUTION_ENV:-}" == "CloudShell" ]]; then
+  info "CloudShell detected — using ambient credentials (no profile needed)"
+  unset AWS_PROFILE
+else
+  if ! $NON_INTERACTIVE; then
+    AVAILABLE_PROFILES=$(aws configure list-profiles 2>/dev/null | tr '\n' ' ' || echo "")
+    [[ -n "$AVAILABLE_PROFILES" ]] && info "Available AWS profiles: $AVAILABLE_PROFILES"
+  fi
+  prompt AWS_PROFILE "AWS profile" "${AWS_PROFILE:-default}"
+  export AWS_PROFILE
 fi
 
-prompt AWS_PROFILE "AWS profile" "${AWS_PROFILE:-default}"
-export AWS_PROFILE
-
-IDENTITY=$(aws sts get-caller-identity --output json 2>&1) || error "AWS credentials invalid for profile '$AWS_PROFILE'. Run: aws sso login --profile $AWS_PROFILE"
+IDENTITY=$(aws sts get-caller-identity --output json 2>&1) || error "AWS credentials invalid${AWS_PROFILE:+ for profile '$AWS_PROFILE'}. Run: aws sso login${AWS_PROFILE:+ --profile $AWS_PROFILE}"
 ACCOUNT=$(echo "$IDENTITY" | jq -r '.Account')
 ARN=$(echo "$IDENTITY" | jq -r '.Arn')
 info "Account: $ACCOUNT | Identity: $ARN"
