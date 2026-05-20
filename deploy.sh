@@ -261,8 +261,17 @@ fi
 
 # ── Domains ────────────────────────────────────────────────────────────────────
 header "Domain names"
-prompt PUBLIC_DOMAIN  "Public-facing domain (e.g. vid.example.com)"          ""
-prompt ADMIN_DOMAIN   "Internal admin domain (e.g. admin.example.com)" ""
+prompt PUBLIC_DOMAIN  "Public-facing domain (e.g. vid.example.com)" ""
+if ! $NON_INTERACTIVE; then
+  read -rp "  Internal admin domain (e.g. admin.example.com) [Enter to skip — HTTP + ALB DNS only]: " ADMIN_DOMAIN
+  ADMIN_DOMAIN="${ADMIN_DOMAIN:-}"
+  save ADMIN_DOMAIN "$ADMIN_DOMAIN"
+  if [[ -z "$ADMIN_DOMAIN" ]]; then
+    info "No admin domain — admin console will be HTTP only, reachable via ALB DNS name from VPN. You can CNAME a domain to it later."
+  fi
+else
+  ADMIN_DOMAIN="${SAVED[ADMIN_DOMAIN]:-}"
+fi
 
 # ── Route 53 hosted zone (optional) ──────────────────────────────────────────
 header "Route 53 (optional)"
@@ -371,15 +380,19 @@ request_cert_if_needed() {
   fi
 }
 
-request_cert_if_needed CF_CERT_ARN    "$PUBLIC_DOMAIN"  "us-east-1"     "CloudFront cert (us-east-1)"
-request_cert_if_needed REGIONAL_CERT  "$PUBLIC_DOMAIN"  "$AWS_REGION"   "Regional cert (admin ALB)"
-# Admin domain uses the same regional cert if it's a subdomain of the same zone — otherwise request a new one
-if [[ "$ADMIN_DOMAIN" != "$PUBLIC_DOMAIN" ]]; then
-  request_cert_if_needed REGIONAL_CERT "$ADMIN_DOMAIN" "$AWS_REGION" "Admin regional cert"
+request_cert_if_needed CF_CERT_ARN   "$PUBLIC_DOMAIN" "us-east-1"   "CloudFront cert (us-east-1)"
+request_cert_if_needed REGIONAL_CERT "$PUBLIC_DOMAIN" "$AWS_REGION" "Regional cert"
+
+ADMIN_CERT_ARN=""
+if [[ -n "$ADMIN_DOMAIN" && "$ADMIN_DOMAIN" != "$PUBLIC_DOMAIN" ]]; then
+  request_cert_if_needed ADMIN_CERT_ARN "$ADMIN_DOMAIN" "$AWS_REGION" "Admin domain cert"
+elif [[ -n "$ADMIN_DOMAIN" ]]; then
+  ADMIN_CERT_ARN="$REGIONAL_CERT"
 fi
 
 success "CloudFront cert:  $CF_CERT_ARN"
 success "Regional cert:    $REGIONAL_CERT"
+[[ -n "$ADMIN_DOMAIN" ]] && success "Admin cert:       $ADMIN_CERT_ARN" || info "Admin cert:       none (HTTP only)"
 
 # ── Summary & confirmation ─────────────────────────────────────────────────────
 header "Summary"
@@ -391,7 +404,7 @@ echo "  Private subnets: $PRIVATE_SUBNET_IDS_STR"
 echo "  CF prefix list:  $CF_PREFIX_LIST_ID"
 echo "  VPN CIDR:        $VPN_CIDR"
 echo "  Public domain:   $PUBLIC_DOMAIN"
-echo "  Admin domain:    $ADMIN_DOMAIN"
+echo "  Admin domain:    ${ADMIN_DOMAIN:-(none \xe2\x80\x94 HTTP only via ALB DNS)}"
 echo "  Hosted zone:     $HOSTED_ZONE_ID"
 echo "  CF cert:         $CF_CERT_ARN"
 echo "  Regional cert:   $REGIONAL_CERT"
@@ -433,6 +446,7 @@ jq -n \
   --arg hostedZoneId      "$HOSTED_ZONE_ID" \
   --arg cfCertArn         "$CF_CERT_ARN" \
   --arg regionalCertArn   "$REGIONAL_CERT" \
+  --arg adminCertArn      "$ADMIN_CERT_ARN" \
   --arg stage             "$STAGE" \
   '{
     frontendVpcId:          $frontendVpcId,
@@ -441,11 +455,12 @@ jq -n \
     adminSubnetIds:         $adminSubnetIds,
     cloudfrontPrefixListId: (if $cfPrefixListId != "" then $cfPrefixListId else null end),
     vpnCidr:                $vpnCidr,
-    publicDomain:           $publicDomain,
-    adminDomain:            $adminDomain,
-    hostedZoneId:           $hostedZoneId,
-    cfCertArn:              $cfCertArn,
-    regionalCertArn:        $regionalCertArn,
+    publicDomain:           (if $publicDomain != "" then $publicDomain else null end),
+    adminDomain:            (if $adminDomain   != "" then $adminDomain   else null end),
+    hostedZoneId:           (if $hostedZoneId  != "" then $hostedZoneId  else null end),
+    cfCertArn:              (if $cfCertArn      != "" then $cfCertArn     else null end),
+    regionalCertArn:        (if $regionalCertArn != "" then $regionalCertArn else null end),
+    adminCertArn:           (if $adminCertArn   != "" then $adminCertArn  else null end),
     stage:                  $stage
   }' > "$CDK_CONTEXT"
 success "cdk.context.json written"
