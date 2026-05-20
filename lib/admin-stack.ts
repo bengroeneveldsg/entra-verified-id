@@ -28,8 +28,6 @@ interface AdminStackProps extends cdk.StackProps {
   // Admin writes DID/JWKS/OIDC docs here; CloudFront serves them to the public.
   wellKnownBucket?: s3.IBucket;
   vpnCidr:          string;
-  // Set true when subnets have no NAT gateway and ECR must be reached via IGW
-  assignPublicIp?:  boolean;
   // Optional — omit for no-custom-domain test deployment
   adminDomain?:     string;
   hostedZoneId?:    string;
@@ -47,7 +45,7 @@ export class AdminStack extends cdk.Stack {
     const {
       stage, adminVpcId, adminSubnetIds,
       tables, appSecret, bootstrapSecret, jwtSecret, hostingBucket, wellKnownBucket,
-      adminDomain, hostedZoneId, regionalCertArn, vpnCidr, assignPublicIp,
+      adminDomain, hostedZoneId, regionalCertArn, vpnCidr,
     } = props;
 
     const hasCustomDomain = !!(adminDomain && regionalCertArn && hostedZoneId);
@@ -221,7 +219,7 @@ export class AdminStack extends cdk.Stack {
       desiredCount:   2,
       vpcSubnets:     { subnets: adminSubnets },
       securityGroups: [fargateSg],
-      assignPublicIp: assignPublicIp ?? false,
+      assignPublicIp: false,
       circuitBreaker:  { rollback: true },
     });
 
