@@ -48,9 +48,10 @@ const vpnCidr = ctx('vpnCidr') ?? '0.0.0.0/0';
 const publicDomain    = ctx('publicDomain');
 const adminDomain     = ctx('adminDomain');
 const hostedZoneId    = ctx('hostedZoneId');
-const cfCertArn       = ctx('cfCertArn');
-const regionalCertArn = ctx('regionalCertArn');
-const adminCertArn    = ctx('adminCertArn') ?? regionalCertArn;
+const cfCertArn           = ctx('cfCertArn');
+const regionalCertArn     = ctx('regionalCertArn');
+const adminCertArn        = ctx('adminCertArn') ?? regionalCertArn;
+const adminAssignPublicIp = ctx('adminAssignPublicIp') === 'true';
 
 const env: cdk.Environment = {
   account: process.env.CDK_DEFAULT_ACCOUNT,
@@ -105,6 +106,7 @@ const adminStack = new AdminStack(app, `EntraVid-Admin-${stage}`, {
   hostedZoneId,
   regionalCertArn: adminCertArn,
   vpnCidr,
+  assignPublicIp: adminAssignPublicIp,
 });
 adminStack.addDependency(dataStack);
 adminStack.addDependency(publicFrontendStack);
