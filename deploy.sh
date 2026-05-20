@@ -261,19 +261,6 @@ fi
 
 success "Private subnets: $PRIVATE_SUBNET_IDS_STR"
 
-# Detect whether the VPC has a NAT gateway — if not, admin Fargate needs a public IP to reach ECR
-NAT_GW=$(aws ec2 describe-nat-gateways \
-  --region "$AWS_REGION" \
-  --filter "Name=vpc-id,Values=$VPC_ID" "Name=state,Values=available" \
-  --query 'NatGateways[0].NatGatewayId' --output text 2>/dev/null || echo "")
-if [[ -z "$NAT_GW" || "$NAT_GW" == "None" ]]; then
-  ADMIN_ASSIGN_PUBLIC_IP="true"
-  warn "No NAT gateway found in VPC $VPC_ID — admin Fargate will use assignPublicIp=true to reach ECR"
-else
-  ADMIN_ASSIGN_PUBLIC_IP="false"
-  info "NAT gateway detected ($NAT_GW) — admin Fargate will use assignPublicIp=false"
-fi
-
 # ── Networking ─────────────────────────────────────────────────────────────────
 header "Network access"
 prompt VPN_CIDR "Internal network CIDR (who can reach the admin console, e.g. 10.0.0.0/8)" ""
@@ -483,9 +470,8 @@ jq -n \
   --arg frontendSubnetIds "$PRIVATE_SUBNET_IDS_STR" \
   --arg adminVpcId        "$VPC_ID" \
   --arg adminSubnetIds    "$PRIVATE_SUBNET_IDS_STR" \
-  --arg cfPrefixListId        "$CF_PREFIX_LIST_ID" \
-  --arg vpnCidr               "$VPN_CIDR" \
-  --arg adminAssignPublicIp   "$ADMIN_ASSIGN_PUBLIC_IP" \
+  --arg cfPrefixListId    "$CF_PREFIX_LIST_ID" \
+  --arg vpnCidr           "$VPN_CIDR" \
   --arg publicDomain      "$PUBLIC_DOMAIN" \
   --arg adminDomain       "$ADMIN_DOMAIN" \
   --arg hostedZoneId      "$HOSTED_ZONE_ID" \
@@ -506,7 +492,6 @@ jq -n \
     cfCertArn:              (if $cfCertArn      != "" then $cfCertArn     else null end),
     regionalCertArn:        (if $regionalCertArn != "" then $regionalCertArn else null end),
     adminCertArn:           (if $adminCertArn   != "" then $adminCertArn  else null end),
-    adminAssignPublicIp:    $adminAssignPublicIp,
     stage:                  $stage
   }' > "$CDK_CONTEXT"
 success "cdk.context.json written"
