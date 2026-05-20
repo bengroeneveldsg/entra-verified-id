@@ -506,6 +506,76 @@ if [[ "${AWS_EXECUTION_ENV:-}" == "CloudShell" ]]; then
 fi
 npm install --prefer-offline 2>&1 | tail -20
 
+# ── Pre-deploy orphan cleanup ─────────────────────────────────────────────────
+# On a fresh deploy (no stacks exist yet) orphaned resources from previous
+# failed attempts block CloudFormation. Purge them proactively.
+purge_orphans() {
+  local stage="$1"
+  info "Checking for orphaned resources from previous deploy attempts..."
+  local found=0
+
+  # CloudWatch log groups (Lambda + ECS)
+  for prefix in "/aws/lambda/EntraVerifiedID-" "/entra-vid/"; do
+    while IFS= read -r lg; do
+      [[ -z "$lg" ]] && continue
+      warn "Removing orphaned log group: $lg"
+      aws logs delete-log-group --log-group-name "$lg" \
+        --region "$AWS_REGION" 2>/dev/null || true
+      found=1
+    done < <(aws logs describe-log-groups \
+      --region "$AWS_REGION" \
+      --log-group-name-prefix "$prefix" \
+      --query "logGroups[?contains(logGroupName, '$stage')].logGroupName" \
+      --output text 2>/dev/null | tr '\t' '\n')
+  done
+
+  # DynamoDB tables
+  while IFS= read -r tbl; do
+    [[ -z "$tbl" ]] && continue
+    warn "Removing orphaned DynamoDB table: $tbl"
+    aws dynamodb delete-table --table-name "$tbl" \
+      --region "$AWS_REGION" 2>/dev/null || true
+    found=1
+  done < <(aws dynamodb list-tables --region "$AWS_REGION" \
+    --query "TableNames[?contains(@, '$stage')]" \
+    --output text 2>/dev/null | tr '\t' '\n')
+
+  # Secrets Manager secrets
+  while IFS= read -r secret; do
+    [[ -z "$secret" ]] && continue
+    warn "Removing orphaned secret: $secret"
+    aws secretsmanager delete-secret --secret-id "$secret" \
+      --force-delete-without-recovery \
+      --region "$AWS_REGION" 2>/dev/null || true
+    found=1
+  done < <(aws secretsmanager list-secrets --region "$AWS_REGION" \
+    --query "SecretList[?contains(Name, '$stage')].Name" \
+    --output text 2>/dev/null | tr '\t' '\n')
+
+  # S3 buckets
+  while IFS= read -r bucket; do
+    [[ -z "$bucket" ]] && continue
+    warn "Removing orphaned S3 bucket: $bucket"
+    aws s3 rm "s3://$bucket" --recursive 2>/dev/null || true
+    aws s3api delete-bucket --bucket "$bucket" \
+      --region "$AWS_REGION" 2>/dev/null || true
+    found=1
+  done < <(aws s3api list-buckets \
+    --query "Buckets[?contains(Name, '$stage')].Name" \
+    --output text 2>/dev/null | tr '\t' '\n')
+
+  [[ $found -eq 0 ]] && success "No orphaned resources found" || success "Orphan cleanup complete"
+}
+
+# Only purge when no stacks exist yet (fresh deploy) or any are in ROLLBACK_COMPLETE
+EXISTING_STACKS=$(aws cloudformation list-stacks \
+  --region "$AWS_REGION" \
+  --query "StackSummaries[?contains(StackName, 'EntraVid-') && contains(StackName, '-${STAGE}') && StackStatus != 'DELETE_COMPLETE'].StackName" \
+  --output text 2>/dev/null || echo "")
+if [[ -z "$EXISTING_STACKS" ]]; then
+  purge_orphans "$STAGE"
+fi
+
 # ── CDK bootstrap check ───────────────────────────────────────────────────────
 header "CDK bootstrap"
 BOOTSTRAP_STACK="CDKToolkit"
