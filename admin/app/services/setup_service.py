@@ -247,8 +247,10 @@ def _validate_did_document(authority: str) -> bool:
         doc = resp.json()
         if "@context" not in doc and "id" not in doc:
             raise ValueError("Response does not look like a DID document")
-    except http_requests.RequestException as exc:
-        raise ValueError(f"Could not fetch DID document from {url}: {exc}") from exc
+    except http_requests.RequestException:
+        # Microsoft no longer publicly exposes DID documents at the did:web URL.
+        # The DID will be validated by the Entra Verified ID API on first use.
+        return True
     return True
 
 

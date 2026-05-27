@@ -195,8 +195,9 @@ The solution is built entirely on AWS-managed services — no self-managed infra
 
 | Resource | Requirement |
 |---|---|
-| VPC with internet gateway | The VPC must have an internet gateway attached — CloudFront VPC Origin requires it to reach the internal ALBs over the AWS backbone. Traffic never traverses the public internet; no resources need to be in public subnets. |
-| Private subnets (≥ 2 AZs) | All ALBs and Fargate tasks run in private subnets with outbound internet access (NAT gateway or Cloud WAN) for ECR image pulls. Admin and frontend can share the same VPC and subnets; separate VPCs are supported via `adminVpcId`/`adminSubnetIds` overrides. |
+| **Frontend VPC** (with IGW) | CloudFront VPC Origin requires an internet gateway to be attached to the VPC it connects to — even if no resources have public IPs. Subnets can be public (Fargate uses `assignPublicIp: true`, pulls ECR directly via IGW) or private with NAT (set `assignPublicIp: false` in that case). |
+| **Admin VPC** (outbound internet) | The admin Fargate tasks run with `assignPublicIp: false` and need outbound internet for ECR pulls via a NAT gateway or Cloud WAN egress. An IGW is **not** required. Can be the same VPC as the frontend if it also has outbound egress. |
+| Subnets (≥ 2 AZs per VPC) | Each VPC needs subnets in at least two availability zones for the ALB. `deploy.sh` presents a numbered list for each VPC and lets you pick. |
 | ACM certificate | A cert covering your public domain in `us-east-1` (required by CloudFront). Can be a wildcard (`*.example.com`) or a specific domain cert (`vid.example.com`) — either works. No regional cert needed; both ALBs are internal HTTP and TLS terminates at CloudFront. |
 
 ### Required Entra configuration
@@ -450,13 +451,14 @@ cd v2
 The script guides you through:
 
 1. **Credential verification** — confirms your AWS identity before proceeding
-2. **VPC selection** — queries your account and presents a numbered list of VPCs and subnets
-3. **VPN CIDR** — the IP range allowed to reach the admin console
-4. **Domain** — your public-facing domain (e.g. `vid.yourdomain.com`)
-5. **ACM certificates** — select existing or create new DNS-validated certificates
-6. **CDK bootstrap** — runs automatically if not already bootstrapped in the account/region
-7. **Stack deployment** — all 5 stacks deployed in dependency order with progress output
-8. **Post-deploy summary** — prints public URL, admin URL, and one-time bootstrap credentials
+2. **Frontend VPC** — pick the VPC (must have IGW) and subnets for the public frontend ALB + Fargate
+3. **Admin VPC** — pick the VPC (needs outbound egress for ECR) and subnets for the admin console, or confirm it shares the frontend VPC
+4. **VPN CIDR** — the IP range allowed to reach the admin console
+5. **Domain** — your public-facing domain (e.g. `vid.yourdomain.com`)
+6. **ACM certificates** — select existing or create new DNS-validated certificates
+7. **CDK bootstrap** — runs automatically if not already bootstrapped in the account/region
+8. **Stack deployment** — all 5 stacks deployed in dependency order with progress output
+9. **Post-deploy summary** — prints public URL, admin URL, and one-time bootstrap credentials
 
 All parameters are saved to `.deploy.env` (gitignored) — subsequent runs use saved values as defaults.
 

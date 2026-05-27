@@ -20,10 +20,12 @@ cdk.out/
 
 # ── Deployment state — sensitive, never commit ────────────────────────────────
 .deploy.env
+.deploy.env*.bak
 cdk-outputs.json
 # cdk.context.json contains deployment-specific VPC/subnet IDs.
 # Operators should generate this via ./deploy.sh; do not commit.
 cdk.context.json
+cdk.context.json*.bak
 
 # ── Frontend build output ─────────────────────────────────────────────────────
 frontend/dist/
