@@ -253,8 +253,6 @@ This app registration is used by the Lambda functions to call the Verified ID RE
 6. **Grant admin consent** — click **Grant admin consent for {organisation}** and confirm all permissions
 
 > `VerifiableCredential.Create.All` is always required. `GroupMember.Read.All` is only needed if you configure `allowedGroupIds` on one or more SAML applications — the Lambda will call the Microsoft Graph API to verify the authenticated user is in at least one of the permitted groups before issuing the SAML assertion.
->
-> **Note:** `User.Read.All` is *not* required and should not be added. Some older tutorials include it, but this application only needs `GroupMember.Read.All` and `Group.Read.All` for Graph API access. If your existing app registration has `User.Read.All`, you can safely replace it with these two narrower permissions to follow least-privilege.
 
 ---
 
