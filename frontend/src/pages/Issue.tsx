@@ -155,6 +155,7 @@ export default function Issue() {
     <FlowCard
       title="Get Your Credential"
       subtitle="One-time setup — scan with Microsoft Authenticator to add your Verified Employee credential."
+      onClose={() => { stopTimers(); navigate('/'); }}
     >
       {/* Step indicator */}
       <Box sx={{ width: '100%' }}>

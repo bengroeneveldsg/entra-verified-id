@@ -224,6 +224,7 @@ export default function Login() {
         title="Sign In"
         subtitle="Scan the QR code with Microsoft Authenticator to sign in."
         sx={{ minHeight: 'auto', py: 0, px: 0, background: 'transparent' }}
+        onClose={() => { stopTimers(); navigate('/'); }}
       >
       {/* Progress stepper */}
       <Stepper activeStep={active} alternativeLabel sx={{ width: '100%' }}>
