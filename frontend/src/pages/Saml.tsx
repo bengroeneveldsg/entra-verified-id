@@ -369,6 +369,7 @@ export default function Saml() {
         title={appDisplayName ? `Sign In to ${appDisplayName}` : 'Sign In'}
         subtitle="Scan the QR code with Microsoft Authenticator to authenticate."
         sx={{ minHeight: 'auto', py: 0, px: 0, background: 'transparent' }}
+        onClose={() => { stopTimers(); navigate('/'); }}
       >
       {/* Loading */}
       {flowState === 'loading' && (

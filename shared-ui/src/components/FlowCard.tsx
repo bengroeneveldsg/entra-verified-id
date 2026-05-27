@@ -3,10 +3,13 @@ import {
   Box,
   Typography,
   Divider,
+  IconButton,
+  Tooltip,
   SxProps,
   Theme,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
+import CloseIcon from '@mui/icons-material/Close';
 
 // ---------------------------------------------------------------------------
 // FlowCard
@@ -32,6 +35,8 @@ export interface FlowCardProps {
   footer?: React.ReactNode;
   /** Additional sx overrides on the outermost page container. */
   sx?: SxProps<Theme>;
+  /** Called when the user presses the close button. When provided, a round X button appears in the top-right corner of the card. */
+  onClose?: () => void;
 }
 
 export function FlowCard({
@@ -43,6 +48,7 @@ export function FlowCard({
   children,
   footer,
   sx,
+  onClose,
 }: FlowCardProps) {
   return (
     // Full-viewport centring wrapper
@@ -66,6 +72,7 @@ export function FlowCard({
       {/* Card surface */}
       <Box
         sx={{
+          position: 'relative',
           width: '100%',
           maxWidth: 480,
           display: 'flex',
@@ -93,6 +100,39 @@ export function FlowCard({
           overflow: 'hidden',
         }}
       >
+        {/* Close button */}
+        {onClose && (
+          <Tooltip title="Close">
+            <IconButton
+              aria-label="Close"
+              onClick={onClose}
+              size="small"
+              sx={{
+                position: 'absolute',
+                top: 12,
+                right: 12,
+                zIndex: 1,
+                color: 'text.secondary',
+                backgroundColor: (theme) =>
+                  theme.palette.mode === 'dark'
+                    ? alpha(theme.palette.background.paper, 0.6)
+                    : alpha('#ffffff', 0.6),
+                backdropFilter: 'blur(8px)',
+                border: (theme) => `1px solid ${alpha(theme.palette.divider, 0.5)}`,
+                '&:hover': {
+                  backgroundColor: (theme) =>
+                    theme.palette.mode === 'dark'
+                      ? alpha(theme.palette.background.paper, 0.85)
+                      : alpha('#ffffff', 0.95),
+                  color: 'text.primary',
+                },
+              }}
+            >
+              <CloseIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        )}
+
         {/* ---------------------------------------------------------------- */}
         {/* Header: logo + title + subtitle                                  */}
         {/* ---------------------------------------------------------------- */}
