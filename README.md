@@ -489,6 +489,34 @@ npx cdk deploy "EntraVid-PublicFrontend-v2" --require-approval never
 npx cdk deploy --all --require-approval never
 ```
 
+### Tearing down a deployment
+
+To permanently remove all resources for a given stage, use `destroy.sh`:
+
+```bash
+./destroy.sh
+```
+
+The script will:
+
+1. Display a full inventory of everything that will be deleted — stacks, S3 buckets, DynamoDB tables, and secrets
+2. Require **two confirmations** before proceeding: the stage name and the phrase `permanently destroy`
+3. Run `cdk destroy` on all 5 stacks
+4. Empty and delete both S3 buckets (including all object versions)
+5. Force-delete all Secrets Manager secrets immediately, bypassing the default 7-day recovery window
+6. Delete all DynamoDB tables
+
+At the end it prints a checklist of resources that must be removed manually:
+
+| Resource | Where |
+|---|---|
+| DNS CNAME record | Route 53 (or your DNS provider) — remove the record pointing to CloudFront |
+| ACM certificates | AWS Certificate Manager — us-east-1 (CloudFront cert) and your deployment region (ALB cert) |
+| Entra client secret | Azure portal → App registrations → Certificates & secrets — revoke the secret used for this deployment |
+| `.deploy.env` | Local file on your machine — delete or archive it |
+
+> **Warning:** this operation is irreversible. All DynamoDB data (sessions, SAML apps, audit logs, signing keys, system config) and all S3 content will be permanently deleted. There is no recovery.
+
 ---
 
 ## Configuration
