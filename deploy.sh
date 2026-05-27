@@ -208,36 +208,30 @@ done < <(echo "$VPC_JSON" | jq -r '.Vpcs[] | [.VpcId, .CidrBlock, (.Tags // [] |
 
 [[ ${#VPC_IDS[@]} -eq 0 ]] && error "No VPCs found in $AWS_REGION"
 
+# ── Frontend (public) VPC ─────────────────────────────────────────────────────
+echo -e "\n  ${BOLD}Public Frontend VPC${RESET} — CloudFront VPC Origin + Fargate"
+warn "This VPC must have an Internet Gateway attached (required by CloudFront VPC Origins)."
+
 if ! $NON_INTERACTIVE; then
-  select_from_list SELECTED_LABEL "Choose VPC (for admin console and public frontend):" "${VPC_LABELS[@]}"
-  VPC_ID=$(echo "$SELECTED_LABEL" | awk '{print $1}')
-  save VPC_ID "$VPC_ID"
+  select_from_list SELECTED_LABEL "Choose frontend VPC:" "${VPC_LABELS[@]}"
+  PUBLIC_VPC_ID=$(echo "$SELECTED_LABEL" | grep -oE 'vpc-[a-z0-9]+' | head -1)
+  save PUBLIC_VPC_ID "$PUBLIC_VPC_ID"
 else
-  VPC_ID="$(_saved_get VPC_ID)"
-  [[ -z "$VPC_ID" ]] && error "VPC_ID required in .deploy.env"
+  PUBLIC_VPC_ID="$(_saved_get PUBLIC_VPC_ID)"
+  [[ -z "$PUBLIC_VPC_ID" ]] && error "PUBLIC_VPC_ID required in .deploy.env"
 fi
+success "Frontend VPC: $PUBLIC_VPC_ID"
 
-success "VPC: $VPC_ID"
-
-info "Fetching subnets in VPC $VPC_ID..."
+info "Fetching subnets in VPC $PUBLIC_VPC_ID..."
 SUBNET_JSON=$(aws ec2 describe-subnets \
-  --filters "Name=vpc-id,Values=$VPC_ID" \
+  --filters "Name=vpc-id,Values=$PUBLIC_VPC_ID" \
   --region "$AWS_REGION" --output json)
 
-PRIVATE_SUBNET_LABELS=()
-PRIVATE_SUBNET_IDS=()
-
+PUBLIC_SUBNET_LABELS=()
 while IFS=$'\t' read -r sid az cidr tier name; do
   label="$sid  AZ: $az  CIDR: $cidr  Name: ${name:-<unnamed>}"
-  if [[ "$tier" == "private" || "$tier" == "Private" ]]; then
-    PRIVATE_SUBNET_IDS+=("$sid")
-    PRIVATE_SUBNET_LABELS+=("$label")
-  elif [[ "$tier" == "public" || "$tier" == "Public" ]]; then
-    : # skip public subnets — all workloads now run in private subnets
-  else
-    PRIVATE_SUBNET_IDS+=("$sid")
-    PRIVATE_SUBNET_LABELS+=("[untagged] $label")
-  fi
+  [[ "$tier" != "private" && "$tier" != "Private" && "$tier" != "public" && "$tier" != "Public" ]] && label="[untagged] $label"
+  PUBLIC_SUBNET_LABELS+=("$label")
 done < <(echo "$SUBNET_JSON" | jq -r '
   .Subnets[] |
   [
@@ -250,16 +244,75 @@ done < <(echo "$SUBNET_JSON" | jq -r '
 ' | sort -k2)
 
 if ! $NON_INTERACTIVE; then
-  multiselect PRIVATE_SUBNET_IDS_STR "Private subnets (for admin ALB, frontend ALB, and all Fargate tasks — choose ≥ 2 AZs):" "${PRIVATE_SUBNET_LABELS[@]}"
-  # Extract just the subnet IDs from the label strings
-  PRIVATE_SUBNET_IDS_STR=$(echo "$PRIVATE_SUBNET_IDS_STR" | tr ',' '\n' | grep -oE 'subnet-[a-z0-9]+' | tr '\n' ',' | sed 's/,$//')
-  save PRIVATE_SUBNET_IDS "$PRIVATE_SUBNET_IDS_STR"
+  multiselect PUBLIC_SUBNET_IDS_STR "Frontend subnets (ALB + Fargate — choose ≥ 2 AZs):" "${PUBLIC_SUBNET_LABELS[@]}"
+  PUBLIC_SUBNET_IDS_STR=$(echo "$PUBLIC_SUBNET_IDS_STR" | tr ',' '\n' | grep -oE 'subnet-[a-z0-9]+' | tr '\n' ',' | sed 's/,$//')
+  save PUBLIC_SUBNET_IDS "$PUBLIC_SUBNET_IDS_STR"
 else
-  PRIVATE_SUBNET_IDS_STR="$(_saved_get PRIVATE_SUBNET_IDS)"
-  [[ -z "$PRIVATE_SUBNET_IDS_STR" ]] && error "PRIVATE_SUBNET_IDS required in .deploy.env"
+  PUBLIC_SUBNET_IDS_STR="$(_saved_get PUBLIC_SUBNET_IDS)"
+  [[ -z "$PUBLIC_SUBNET_IDS_STR" ]] && error "PUBLIC_SUBNET_IDS required in .deploy.env"
+fi
+success "Frontend subnets: $PUBLIC_SUBNET_IDS_STR"
+
+# ── Admin console VPC ─────────────────────────────────────────────────────────
+echo -e "\n  ${BOLD}Admin Console VPC${RESET} — internal ALB + Fargate (VPN access only)"
+info "This VPC needs outbound internet access (NAT, Cloud WAN, etc.) for ECR image pulls."
+
+SAME_ADMIN_VPC=false
+if ! $NON_INTERACTIVE; then
+  read -rp "  Use the same VPC for admin as frontend? [y/N]: " same_vpc_input
+  if [[ "${same_vpc_input:-N}" =~ ^[Yy] ]]; then
+    SAME_ADMIN_VPC=true
+    VPC_ID="$PUBLIC_VPC_ID"
+    save VPC_ID "$VPC_ID"
+    PRIVATE_SUBNET_IDS_STR="$PUBLIC_SUBNET_IDS_STR"
+    save PRIVATE_SUBNET_IDS "$PRIVATE_SUBNET_IDS_STR"
+    info "Admin will share VPC and subnets with the frontend."
+  fi
 fi
 
-success "Private subnets: $PRIVATE_SUBNET_IDS_STR"
+if ! $SAME_ADMIN_VPC; then
+  if ! $NON_INTERACTIVE; then
+    select_from_list SELECTED_LABEL "Choose admin VPC:" "${VPC_LABELS[@]}"
+    VPC_ID=$(echo "$SELECTED_LABEL" | grep -oE 'vpc-[a-z0-9]+' | head -1)
+    save VPC_ID "$VPC_ID"
+  else
+    VPC_ID="$(_saved_get VPC_ID)"
+    [[ -z "$VPC_ID" ]] && error "VPC_ID required in .deploy.env"
+  fi
+
+  info "Fetching subnets in VPC $VPC_ID..."
+  SUBNET_JSON=$(aws ec2 describe-subnets \
+    --filters "Name=vpc-id,Values=$VPC_ID" \
+    --region "$AWS_REGION" --output json)
+
+  PRIVATE_SUBNET_LABELS=()
+  while IFS=$'\t' read -r sid az cidr tier name; do
+    label="$sid  AZ: $az  CIDR: $cidr  Name: ${name:-<unnamed>}"
+    [[ "$tier" != "private" && "$tier" != "Private" && "$tier" != "public" && "$tier" != "Public" ]] && label="[untagged] $label"
+    PRIVATE_SUBNET_LABELS+=("$label")
+  done < <(echo "$SUBNET_JSON" | jq -r '
+    .Subnets[] |
+    [
+      .SubnetId,
+      .AvailabilityZone,
+      .CidrBlock,
+      ((.Tags // []) | map(select(.Key=="Tier")) | .[0].Value // "unknown"),
+      ((.Tags // []) | map(select(.Key=="Name")) | .[0].Value // "")
+    ] | @tsv
+  ' | sort -k2)
+
+  if ! $NON_INTERACTIVE; then
+    multiselect PRIVATE_SUBNET_IDS_STR "Admin subnets (ALB + Fargate — choose ≥ 2 AZs):" "${PRIVATE_SUBNET_LABELS[@]}"
+    PRIVATE_SUBNET_IDS_STR=$(echo "$PRIVATE_SUBNET_IDS_STR" | tr ',' '\n' | grep -oE 'subnet-[a-z0-9]+' | tr '\n' ',' | sed 's/,$//')
+    save PRIVATE_SUBNET_IDS "$PRIVATE_SUBNET_IDS_STR"
+  else
+    PRIVATE_SUBNET_IDS_STR="$(_saved_get PRIVATE_SUBNET_IDS)"
+    [[ -z "$PRIVATE_SUBNET_IDS_STR" ]] && error "PRIVATE_SUBNET_IDS required in .deploy.env"
+  fi
+fi
+
+success "Admin VPC:     $VPC_ID"
+success "Admin subnets: $PRIVATE_SUBNET_IDS_STR"
 
 # ── Networking ─────────────────────────────────────────────────────────────────
 header "Network access"
@@ -427,18 +480,20 @@ success "CloudFront cert:  $CF_CERT_ARN"
 
 # ── Summary & confirmation ─────────────────────────────────────────────────────
 header "Summary"
-echo "  Account:         $ACCOUNT"
-echo "  Region:          $AWS_REGION"
-echo "  Stage:           $STAGE"
-echo "  VPC:             $VPC_ID"
-echo "  Private subnets: $PRIVATE_SUBNET_IDS_STR"
-echo "  CF prefix list:  $CF_PREFIX_LIST_ID"
-echo "  Internal CIDR:   $VPN_CIDR"
-echo "  Public domain:   $PUBLIC_DOMAIN"
-echo "  Admin domain:    ${ADMIN_DOMAIN:-(none - HTTP only via ALB DNS)}"
-echo "  Hosted zone:     ${HOSTED_ZONE_ID:-(none - manual DNS)}"
-echo "  CF cert:         $CF_CERT_ARN"
-echo "  Regional cert:   $REGIONAL_CERT"
+echo "  Account:          $ACCOUNT"
+echo "  Region:           $AWS_REGION"
+echo "  Stage:            $STAGE"
+echo "  Frontend VPC:     $PUBLIC_VPC_ID"
+echo "  Frontend subnets: $PUBLIC_SUBNET_IDS_STR"
+echo "  Admin VPC:        $VPC_ID"
+echo "  Admin subnets:    $PRIVATE_SUBNET_IDS_STR"
+echo "  CF prefix list:   $CF_PREFIX_LIST_ID"
+echo "  Internal CIDR:    $VPN_CIDR"
+echo "  Public domain:    $PUBLIC_DOMAIN"
+echo "  Admin domain:     ${ADMIN_DOMAIN:-(none - HTTP only via ALB DNS)}"
+echo "  Hosted zone:      ${HOSTED_ZONE_ID:-(none - manual DNS)}"
+echo "  CF cert:          $CF_CERT_ARN"
+echo "  Regional cert:    $REGIONAL_CERT"
 echo ""
 
 if $DESTROY; then
@@ -466,8 +521,8 @@ fi
 # ── CDK context file ──────────────────────────────────────────────────────────
 CDK_CONTEXT="$SCRIPT_DIR/cdk.context.json"
 jq -n \
-  --arg frontendVpcId     "$VPC_ID" \
-  --arg frontendSubnetIds "$PRIVATE_SUBNET_IDS_STR" \
+  --arg frontendVpcId     "$PUBLIC_VPC_ID" \
+  --arg frontendSubnetIds "$PUBLIC_SUBNET_IDS_STR" \
   --arg adminVpcId        "$VPC_ID" \
   --arg adminSubnetIds    "$PRIVATE_SUBNET_IDS_STR" \
   --arg cfPrefixListId    "$CF_PREFIX_LIST_ID" \
