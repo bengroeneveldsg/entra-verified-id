@@ -113,11 +113,11 @@ export function Step2Tenant({ onNext }: Props) {
         </AccordionSummary>
         <AccordionDetails>
           <Typography variant="body2" color="text.secondary" component="div">
-            <strong>Tenant ID:</strong> Azure Portal → Entra ID → Overview → Directory (tenant) ID
+            <strong>Tenant ID:</strong> <a href="https://entra.microsoft.com" target="_blank" rel="noreferrer">Entra portal</a> → Identity → Overview → Directory (tenant) ID
             <br /><br />
             <strong>App Registrations:</strong>
             <ol style={{ margin: '8px 0 0', paddingLeft: 20 }}>
-              <li>Azure Portal → App registrations → your app</li>
+              <li><a href="https://entra.microsoft.com" target="_blank" rel="noreferrer">Entra portal</a> → App registrations → your app</li>
               <li><strong>Client ID</strong>: Application (client) ID on the Overview page</li>
               <li><strong>Client Secret</strong>: Certificates &amp; secrets → Client secrets → New client secret</li>
             </ol>

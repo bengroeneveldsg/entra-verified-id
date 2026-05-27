@@ -265,6 +265,6 @@ echo -e "    ${YELLOW}•${RESET}  DNS — remove the CNAME record for your doma
 echo -e "    ${YELLOW}•${RESET}  ACM certificates — delete via the AWS Certificate Manager console"
 echo -e "         (us-east-1 for the CloudFront cert, ${AWS_REGION} for the ALB cert)"
 echo -e "    ${YELLOW}•${RESET}  Entra app registration — remove the client secret used for this"
-echo -e "         deployment from your app registration in the Azure portal"
+echo -e "         deployment from your app registration at entra.microsoft.com"
 echo -e "    ${YELLOW}•${RESET}  .deploy.env — remove or archive this file from your local machine"
 echo ""

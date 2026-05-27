@@ -114,7 +114,7 @@ export function Step3Did({ onNext }: Props) {
           <Typography variant="body2" color="text.secondary" component="div">
             <strong>DID Authority &amp; Manifest URL:</strong>
             <ol style={{ margin: '8px 0 0', paddingLeft: 20 }}>
-              <li>Azure Portal → Verified ID → Overview</li>
+              <li><a href="https://entra.microsoft.com" target="_blank" rel="noreferrer">Entra portal</a> → Verified ID → Overview</li>
               <li>Copy the <strong>Decentralized Identifier</strong> for the authority</li>
               <li>Go to Credentials → your credential type → copy the <strong>Manifest URL</strong></li>
             </ol>

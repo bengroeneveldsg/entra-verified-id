@@ -202,13 +202,13 @@ The solution is built entirely on AWS-managed services — no self-managed infra
 
 ### Required Entra configuration
 
-Complete the following steps in the **Azure Portal** before running `deploy.sh`. The values collected here are entered into the onboarding wizard after deployment.
+Complete the following steps in the **Entra portal** ([entra.microsoft.com](https://entra.microsoft.com)) before running `deploy.sh`. The values collected here are entered into the onboarding wizard after deployment.
 
 ---
 
 #### Step 1 — Enable Verified ID
 
-1. Sign in to [portal.azure.com](https://portal.azure.com) as a Global Administrator
+1. Sign in to [entra.microsoft.com](https://entra.microsoft.com) as a Global Administrator
 2. Navigate to **Entra ID → Verified ID → Get started**
 3. Follow the quick setup wizard — select **Microsoft-managed** for the DID (recommended)
 4. After setup completes, go to **Verified ID → Overview** and note:
@@ -248,7 +248,7 @@ This app registration is used by the Lambda functions to call the Verified ID RE
 5. **If you intend to restrict any SAML application to specific Entra groups** — also add two Microsoft Graph permissions:
    - **API permissions → Add a permission → Microsoft Graph → Application permissions**
    - Search for and add: `GroupMember.Read.All` — allows the Lambda to verify group membership at login time
-   - Search for and add: `Group.Read.All` — allows the admin console to search and resolve group names by display name (so you never need to manually copy Object IDs from the Azure Portal)
+   - Search for and add: `Group.Read.All` — allows the admin console to search and resolve group names by display name (so you never need to manually copy Object IDs from the Entra portal)
    - If you do not plan to use group-based access control on any SAML app, these permissions are not required
 6. **Grant admin consent** — click **Grant admin consent for {organisation}** and confirm all permissions
 
@@ -512,7 +512,7 @@ At the end it prints a checklist of resources that must be removed manually:
 |---|---|
 | DNS CNAME record | Route 53 (or your DNS provider) — remove the record pointing to CloudFront |
 | ACM certificates | AWS Certificate Manager — us-east-1 (CloudFront cert) and your deployment region (ALB cert) |
-| Entra client secret | Azure portal → App registrations → Certificates & secrets — revoke the secret used for this deployment |
+| Entra client secret | [Entra portal](https://entra.microsoft.com) → App registrations → Certificates & secrets — revoke the secret used for this deployment |
 | `.deploy.env` | Local file on your machine — delete or archive it |
 
 > **Warning:** this operation is irreversible. All DynamoDB data (sessions, SAML apps, audit logs, signing keys, system config) and all S3 content will be permanently deleted. There is no recovery.
@@ -721,7 +721,7 @@ The check **fails closed** — if the Graph API call fails for any reason (netwo
 3. Select the groups you want to permit; they appear as chips. Hover a chip to see the underlying Object ID.
 4. Ensure the IssuerVerifier app registration has both `GroupMember.Read.All` and `Group.Read.All` with admin consent granted (see [Step 3 of Entra configuration](#step-3--create-the-issuerverifier-app-registration))
 
-> No Azure Portal access is needed to configure group restrictions — the admin console resolves group names directly. The same `clientId` and `clientSecret` from the IssuerVerifier app registration are used for both Verified ID API calls and all Graph API operations.
+> No Entra portal access is needed to configure group restrictions — the admin console resolves group names directly. The same `clientId` and `clientSecret` from the IssuerVerifier app registration are used for both Verified ID API calls and all Graph API operations.
 
 ---
 
