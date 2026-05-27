@@ -595,7 +595,8 @@ purge_orphans() {
     --query "TableNames[?contains(@, '$stage')]" \
     --output text 2>/dev/null | tr '\t' '\n')
 
-  # Secrets Manager secrets
+  # Secrets Manager secrets — include-planned-deletion catches secrets still in the
+  # 7-day recovery window after a previous cdk destroy
   while IFS= read -r secret; do
     [[ -z "$secret" ]] && continue
     warn "Removing orphaned secret: $secret"
@@ -604,6 +605,7 @@ purge_orphans() {
       --region "$AWS_REGION" 2>/dev/null || true
     found=1
   done < <(aws secretsmanager list-secrets --region "$AWS_REGION" \
+    --include-planned-deletion \
     --query "SecretList[?contains(Name, '$stage')].Name" \
     --output text 2>/dev/null | tr '\t' '\n')
 
@@ -627,7 +629,12 @@ EXISTING_STACKS=$(aws cloudformation list-stacks \
   --region "$AWS_REGION" \
   --query "StackSummaries[?contains(StackName, 'EntraVid-') && contains(StackName, '-${STAGE}') && StackStatus != 'DELETE_COMPLETE'].StackName" \
   --output text 2>/dev/null || echo "")
-if [[ -z "$EXISTING_STACKS" ]]; then
+HAS_ROLLBACK=$(aws cloudformation list-stacks \
+  --region "$AWS_REGION" \
+  --stack-status-filter ROLLBACK_COMPLETE \
+  --query "StackSummaries[?contains(StackName, 'EntraVid-') && contains(StackName, '-${STAGE}')].StackName" \
+  --output text 2>/dev/null || echo "")
+if [[ -z "$EXISTING_STACKS" ]] || [[ -n "$HAS_ROLLBACK" ]]; then
   purge_orphans "$STAGE"
 fi
 
