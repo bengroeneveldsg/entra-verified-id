@@ -61,7 +61,7 @@ This document covers **v2 only** unless explicitly stated otherwise.
 
 The system supports three distinct flows:
 
-1. **Direct login** — user visits a login page, scans QR, and receives a session (e.g. for `bgamzn.com`)
+1. **Direct login** — user visits a login page, scans QR, and receives a session (e.g. for `your-app.example.com`)
 2. **Credential issuance** — user scans QR to add the VerifiedEmployee credential to their Authenticator wallet
 3. **SAML IdP** — SAML-federated apps (Amazon WorkSpaces, Kiro) redirect to this system as an IdP; user scans QR to authenticate
 
@@ -76,14 +76,14 @@ User browser
      │
      ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  CloudFront (E21UD6IYEV7RKU)                                        │
+│  CloudFront ({cloudfront-distribution-id})                                        │
 │  • TLS termination, caching, WAF-light                              │
 │  • Behaviour /api/*  → API Gateway (HTTP API) origin                │
 │  • Behaviour /.well-known/* → S3 WellKnown bucket (OAC)            │
 │  • Default behaviour → internal ALB VPC Origin                      │
 └──────────────────────────────────────────────────────────────────────
             │                                   │
-            ▼ VPC Origin (pl-31a34658)           ▼ S3 OAC
+            ▼ VPC Origin ({cloudfront-vpc-origin-prefix-list-id})           ▼ S3 OAC
    ┌─────────────────┐                 ┌─────────────────────┐
    │  Internal ALB   │                 │  S3 WellKnown bucket │
    │  (private VPC)  │                 │  (JWKS, DID, OIDC)  │
@@ -145,8 +145,8 @@ Admin path (VPN only):
 
 ## 3. AWS Services Reference
 
-**AWS Account:** `241533137601`  
-**Primary Region:** `ap-southeast-1` (Singapore)
+**AWS Account:** `{aws-account-id}`  
+**Primary Region:** `{aws-region}`
 
 This section explains each AWS service used in the project — what the service is, and the specific role it plays here.
 
@@ -159,11 +159,11 @@ This section explains each AWS service used in the project — what the service 
 **How we use it:**
 
 - **Single public entry point** for all user traffic — the only resource with a public internet-facing address. No ALB or API Gateway endpoint is directly exposed.
-- **VPC Origin** connects CloudFront to the internal frontend ALB inside the private VPC. This is what allows an ALB with no public IP to serve internet traffic; CloudFront routes requests into the VPC over AWS's private backbone using prefix list `pl-31a34658`.
+- **VPC Origin** connects CloudFront to the internal frontend ALB inside the private VPC. This is what allows an ALB with no public IP to serve internet traffic; CloudFront routes requests into the VPC over AWS's private backbone using prefix list `{cloudfront-vpc-origin-prefix-list-id}`.
 - **S3 Origin with OAC (Origin Access Control)** serves `/.well-known/*` documents (JWKS, DID document, OIDC discovery) directly from S3 without exposing the bucket publicly.
 - **TLS termination** — users connect over HTTPS. CloudFront holds the public ACM certificate and enforces HTTPS-only.
 
-**Resource:** Distribution ID `E21UD6IYEV7RKU`
+**Resource:** Distribution ID `{cloudfront-distribution-id}`
 
 ---
 
@@ -189,7 +189,7 @@ Both services use rolling deployments: when a new image is pushed, ECS starts th
 - **Frontend ALB** (internal, no public IP) — receives traffic from CloudFront via VPC Origin and forwards it to the Nginx Fargate tasks. Security group allows inbound only from the CloudFront prefix list.
 - **Admin ALB** (internal, no public IP) — receives traffic from the WAF and forwards it to the FastAPI Fargate tasks. Only reachable from within the VPN-connected network.
 
-Both ALBs are HTTP-only at the ALB level (TLS is terminated at CloudFront / VPN boundary). This is intentional for the current deployment; ACM certificates for ap-southeast-1 have not yet been provisioned.
+Both ALBs are HTTP-only at the ALB level (TLS is terminated at CloudFront / VPN boundary). This is intentional for the current deployment; ACM certificates for {aws-region} have not yet been provisioned.
 
 ---
 
@@ -378,9 +378,9 @@ When a custom domain is configured, CDK can create CNAME records pointing `api.{
 **How we use it (optional):**
 
 - **`us-east-1` certificate** — attached to the CloudFront distribution for the custom domain (e.g. `vid.example.com`)
-- **Regional certificate** (`ap-southeast-1`) — attached to the API Gateway custom domain (`api.vid.example.com`)
+- **Regional certificate** (`{aws-region}`) — attached to the API Gateway custom domain (`api.vid.example.com`)
 
-> **Current deployment:** No ACM certificates have been provisioned in ap-southeast-1 yet. Both ALBs are HTTP-only; TLS is handled at CloudFront (for frontend) and VPN (for admin).
+> **Current deployment:** No ACM certificates have been provisioned in {aws-region} yet. Both ALBs are HTTP-only; TLS is handled at CloudFront (for frontend) and VPN (for admin).
 
 ---
 
@@ -388,7 +388,7 @@ When a custom domain is configured, CDK can create CNAME records pointing `api.{
 
 | Service | What it is (one line) | Our resource(s) |
 |---------|----------------------|-----------------|
-| **CloudFront** | Global CDN + TLS termination | Distribution `E21UD6IYEV7RKU` |
+| **CloudFront** | Global CDN + TLS termination | Distribution `{cloudfront-distribution-id}` |
 | **ECS Fargate** | Serverless container runtime | 2 services (frontend + admin) |
 | **ALB** | Layer 7 load balancer | 2 internal ALBs |
 | **WAF** | HTTP firewall / IP allowlist | Admin ALB only |
@@ -514,15 +514,15 @@ httpApi.addStage('DefaultStage', {
 Builds a React SPA Docker image and deploys it to ECS Fargate behind an **internal** ALB. CloudFront sits in front with a VPC Origin pointing at the ALB. No internet-facing ALB exists.
 
 Key design decisions:
-- ALB security group allows inbound only from CloudFront VPC Origins prefix list (`pl-31a34658` in ap-southeast-1)
-- Fargate tasks run in private subnets with `assignPublicIp: true` — this is because the frontend VPC (`vpc-0d7e5636fcbdcea1a`) has an IGW, which is required for the CloudFront VPC Origin feature
+- ALB security group allows inbound only from CloudFront VPC Origins prefix list (`{cloudfront-vpc-origin-prefix-list-id}` in {aws-region})
+- Fargate tasks run in private subnets with `assignPublicIp: true` — this is because the frontend VPC (`{frontend-vpc-id}`) has an IGW, which is required for the CloudFront VPC Origin feature
 - A second S3 bucket (`WellKnownBucket`) is created in this stack and connected to CloudFront via OAC for serving `/.well-known/*` documents (JWKS, DID, OIDC discovery)
 
 ### 4.5 Admin Stack (`EntraVid-Admin-v2`)
 
 **File:** `v2/lib/admin-stack.ts`
 
-Deploys the FastAPI admin console to ECS Fargate in the admin VPC (`vpc-02ad72cb9e04fd9c6`). An AWS WAF Web ACL with an IP allowlist (VPN CIDR) guards the internal ALB — no request reaches the container without first passing WAF.
+Deploys the FastAPI admin console to ECS Fargate in the admin VPC (`{admin-vpc-id}`). An AWS WAF Web ACL with an IP allowlist (VPN CIDR) guards the internal ALB — no request reaches the container without first passing WAF.
 
 - Fargate tasks use `assignPublicIp: false`; ECR image pulls route through Cloud WAN egress
 - `SECURE_COOKIE=false` is currently set because the admin ALB does not have an ACM cert (HTTP only at ALB level, HTTPS terminated at WAF/VPN boundary)
@@ -537,8 +537,8 @@ The deployment uses two **pre-existing** VPCs. CDK does not create networking re
 
 | VPC | ID | Purpose | Egress |
 |-----|----|---------|--------|
-| Frontend | `vpc-0d7e5636fcbdcea1a` | Public frontend Fargate, ALB | IGW (required for VPC Origin) |
-| Admin | `vpc-02ad72cb9e04fd9c6` | Admin Fargate, admin ALB | Cloud WAN |
+| Frontend | `{frontend-vpc-id}` | Public frontend Fargate, ALB | IGW (required for VPC Origin) |
+| Admin | `{admin-vpc-id}` | Admin Fargate, admin ALB | Cloud WAN |
 
 Both VPCs have subnets in ≥2 availability zones (required for ALB).
 
@@ -547,7 +547,7 @@ Both VPCs have subnets in ≥2 availability zones (required for ALB).
 **Frontend path:**
 
 ```
-Internet → CloudFront → [pl-31a34658 prefix list] → ALB SG → ALB → Fargate SG → Fargate tasks
+Internet → CloudFront → [{cloudfront-vpc-origin-prefix-list-id} prefix list] → ALB SG → ALB → Fargate SG → Fargate tasks
 ```
 
 - **ALB SG** (`AlbSg`): ingress TCP/80 from CloudFront prefix list
@@ -564,7 +564,7 @@ VPN → WAF (IP allowlist) → ALB SG → ALB → Fargate SG → Fargate tasks
 
 ### CloudFront Distribution
 
-**Distribution ID:** `E21UD6IYEV7RKU`
+**Distribution ID:** `{cloudfront-distribution-id}`
 
 | Behaviour | Path | Origin | Cache |
 |-----------|------|--------|-------|
@@ -1457,7 +1457,7 @@ The SAML/JWT signing key lifecycle:
 
 ### AWS Account Requirements
 
-- AWS account `241533137601` with appropriate IAM permissions
+- AWS account `{aws-account-id}` with appropriate IAM permissions
 - Two pre-existing VPCs (see [Section 5](#5-network-topology)):
   - Frontend VPC: has Internet Gateway attached (required for CloudFront VPC Origin)
   - Admin VPC: has outbound egress for ECR (Cloud WAN or NAT Gateway)
@@ -1471,7 +1471,7 @@ The SAML/JWT signing key lifecycle:
 - ACM certificate in `us-east-1` for CloudFront custom domain
 - ACM certificate in the deployment region for API Gateway custom domain
 
-> **Current state:** Both ALBs are HTTP-only (no ACM cert in ap-southeast-1 yet). `SECURE_COOKIE=false` is set on the admin. CloudFront handles TLS termination. Route 53 is in a separate networking account — DNS records are added manually.
+> **Current state:** Both ALBs are HTTP-only (no ACM cert in {aws-region} yet). `SECURE_COOKIE=false` is set on the admin. CloudFront handles TLS termination. Route 53 is in a separate networking account — DNS records are added manually.
 
 ### Microsoft Entra Requirements
 
@@ -1520,8 +1520,8 @@ cd "v2"
 npm install
 
 # 4. Bootstrap CDK (one-time per account/region)
-CDK_DEFAULT_ACCOUNT=241533137601 CDK_DEFAULT_REGION=ap-southeast-1 \
-  npx cdk bootstrap aws://241533137601/ap-southeast-1 --profile your-profile
+CDK_DEFAULT_ACCOUNT={aws-account-id} CDK_DEFAULT_REGION={aws-region} \
+  npx cdk bootstrap aws://{aws-account-id}/{aws-region} --profile your-profile
 
 # 5. Run interactive deploy script
 ./deploy.sh
@@ -1531,18 +1531,18 @@ The `deploy.sh` script prompts for all required context values and saves them to
 
 ```
 AWS_PROFILE=your-profile
-CDK_DEFAULT_ACCOUNT=241533137601
-CDK_DEFAULT_REGION=ap-southeast-1
-FRONTEND_VPC_ID=vpc-0d7e5636fcbdcea1a
+CDK_DEFAULT_ACCOUNT={aws-account-id}
+CDK_DEFAULT_REGION={aws-region}
+FRONTEND_VPC_ID={frontend-vpc-id}
 FRONTEND_SUBNET_IDS=subnet-xxx,subnet-yyy
-ADMIN_VPC_ID=vpc-02ad72cb9e04fd9c6
+ADMIN_VPC_ID={admin-vpc-id}
 ADMIN_SUBNET_IDS=subnet-aaa,subnet-bbb
 VPN_CIDR=10.0.0.0/8
 PUBLIC_DOMAIN=vid.example.com
 HOSTED_ZONE_ID=Z...
 CF_CERT_ARN=arn:aws:acm:us-east-1:...
-REGIONAL_CERT_ARN=arn:aws:acm:ap-southeast-1:...
-CF_PREFIX_LIST_ID=pl-31a34658
+REGIONAL_CERT_ARN=arn:aws:acm:{aws-region}:...
+CF_PREFIX_LIST_ID={cloudfront-vpc-origin-prefix-list-id}
 ```
 
 ### Stack Deployment Order
@@ -1619,11 +1619,11 @@ npx cdk destroy --all
 | `APP_TABLE` | CDK | `VerifiedIDSamlApps-v2` |
 | `SYSTEM_CONFIG_TABLE` | CDK | `EntraVerifiedIDSystemConfig-v2` |
 | `SECRET_NAME` | CDK | `EntraVerifiedID/v2/app` |
-| `HOSTING_BUCKET` | CDK | `entra-vid-hosting-241533137601-v2` |
+| `HOSTING_BUCKET` | CDK | `entra-vid-hosting-{aws-account-id}-v2` |
 | `STAGE` | CDK | `v2` |
 | `LOG_LEVEL` | CDK | `INFO` |
 | `POWERTOOLS_SERVICE_NAME` | CDK | `EntraVerifiedID-v2` |
-| `AWS_REGION` | Lambda runtime | `ap-southeast-1` |
+| `AWS_REGION` | Lambda runtime | `{aws-region}` |
 | `AWS_SESSION_TOKEN` | Lambda runtime | (used by Secrets Manager sidecar) |
 
 ### CloudWatch Log Groups
@@ -1651,7 +1651,7 @@ aws dynamodb get-item \
 **Invalidate CloudFront cache after JWKS update:**
 ```bash
 aws cloudfront create-invalidation \
-  --distribution-id E21UD6IYEV7RKU \
+  --distribution-id {cloudfront-distribution-id} \
   --paths "/.well-known/*"
 ```
 
