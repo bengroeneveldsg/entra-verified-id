@@ -31,7 +31,7 @@ A production-ready AWS deployment that enables **passwordless QR-code authentica
 |---|---|
 | **Credential issuance** | A user visits `/issue`, scans a QR code, and receives a VerifiedEmployee credential in Microsoft Authenticator |
 | **Standalone QR login** | Any application can call `/api/login/start` to challenge a user with a QR code and receive their verified claims |
-| **SAML IdP** | Replaces Entra as the identity provider for SAML-federated apps (AppStream, WorkSpaces, etc.) — users scan a QR instead of entering a password |
+| **SAML IdP** | Replaces Entra as the identity provider for SAML-federated apps (Amazon WorkSpaces Personal and Amazon WorkSpaces Applications) — users scan a QR instead of entering a password |
 | **Admin console** | An internal-network-only web UI for managing SAML apps, signing keys, sessions, audit logs, and system configuration |
 
 ---
