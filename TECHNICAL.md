@@ -44,19 +44,6 @@
 
 Entra Verified ID is a production AWS deployment that implements **passwordless QR-code authentication** using Microsoft Entra Verified ID digital credentials. Users open Microsoft Authenticator, scan a QR code displayed in a browser, and their VerifiedEmployee credential is presented to the system — no password required.
 
-The system has two generations:
-
-| | v1 | v2 (production) |
-|---|---|---|
-| Infrastructure | Single 2 000-line CloudFormation YAML | 5 modular CDK TypeScript stacks |
-| Frontend | Static HTML in S3 behind CloudFront | React SPA on ECS Fargate behind CloudFront |
-| Admin | None | FastAPI + React admin console, WAF-protected |
-| SAML IdP | Via separate CFN stacks | Built into Lambda (saml_idp) |
-| Config store | CloudFormation parameters | DynamoDB + Secrets Manager via admin wizard |
-| Status | Legacy — do not modify | Active |
-
-This document covers **v2 only** unless explicitly stated otherwise.
-
 ### Authentication Flows
 
 The system supports three distinct flows:
@@ -211,7 +198,7 @@ Both ALBs are HTTP-only at the ALB level (TLS is terminated at CloudFront (for f
 
 **How we use it:**
 
-- **Named:** `EntraVerifiedID-v2`
+- **Named:** `EntraVerifiedID-{stage}`
 - Routes all `/api/*` requests to the appropriate Lambda function (see [Section 10](#10-api-gateway-routes) for the full route table).
 - Configured with **throttling**: 100 requests per second sustained, 200 burst. This protects the Lambda functions from traffic spikes and limits the blast radius of any abuse.
 - **CORS** is configured at the API level, restricting `allowOrigins` to the public domain when one is set.
@@ -231,14 +218,14 @@ All business logic lives in Lambda. There are six functions, all Python 3.12 on 
 
 | Function | Route | Role |
 |----------|-------|------|
-| `EntraVerifiedID-LoginStart-v2` | `POST /api/login/start` | Creates the Verified ID presentation request; returns QR code |
-| `EntraVerifiedID-LoginCallback-v2` | `POST /api/login/callback` | Receives Entra webhook; writes verified claims to DynamoDB |
-| `EntraVerifiedID-LoginStatus-v2` | `GET /api/login/status/{requestId}` | Browser polls this; atomically hands off claims on first success |
-| `EntraVerifiedID-IssueStart-v2` | `POST /api/issue/start` | Creates the Verified ID issuance request |
-| `EntraVerifiedID-IssueCallback-v2` | `POST /api/issue/callback` | Receives issuance webhook; updates DynamoDB |
-| `EntraVerifiedID-SamlIdp-v2` | `GET\|POST /api/saml/*` | Full SAML 2.0 IdP — metadata, SSO, assertion signing |
+| `EntraVerifiedID-LoginStart-{stage}` | `POST /api/login/start` | Creates the Verified ID presentation request; returns QR code |
+| `EntraVerifiedID-LoginCallback-{stage}` | `POST /api/login/callback` | Receives Entra webhook; writes verified claims to DynamoDB |
+| `EntraVerifiedID-LoginStatus-{stage}` | `GET /api/login/status/{requestId}` | Browser polls this; atomically hands off claims on first success |
+| `EntraVerifiedID-IssueStart-{stage}` | `POST /api/issue/start` | Creates the Verified ID issuance request |
+| `EntraVerifiedID-IssueCallback-{stage}` | `POST /api/issue/callback` | Receives issuance webhook; updates DynamoDB |
+| `EntraVerifiedID-SamlIdp-{stage}` | `GET\|POST /api/saml/*` | Full SAML 2.0 IdP — metadata, SSO, assertion signing |
 
-Each function runs in a **shared IAM role** (`EntraVerifiedID-Lambda-v2`) with least-privilege grants to DynamoDB, Secrets Manager, and S3. X-Ray tracing is enabled on all functions.
+Each function runs in a **shared IAM role** (`EntraVerifiedID-Lambda-{stage}`) with least-privilege grants to DynamoDB, Secrets Manager, and S3. X-Ray tracing is enabled on all functions.
 
 Lambda **cold starts** (first invocation after a sandbox is created) add ~500–800 ms for Python with the cryptography layer. Subsequent warm invocations are typically under 100 ms.
 
@@ -250,7 +237,7 @@ Lambda **cold starts** (first invocation after a sandbox is created) add ~500–
 
 **How we use it:**
 
-A single layer (`EntraVid-CryptoLayer-v2`) is built from a Docker image (`v2/layer/Dockerfile`) and contains:
+A single layer (`EntraVid-CryptoLayer-{stage}`) is built from a Docker image (`layer/Dockerfile`) and contains:
 - **`cryptography`** — RSA-2048 key generation, RSA-PKCS1v15 signing, X.509 certificate handling. Used by `saml_idp` to sign SAML assertions.
 - **`lxml`** — XML parsing and exclusive C14N canonicalisation required by the XML-DSig specification used in SAML. The standard Python `xml` library does not implement C14N correctly.
 - **`aws-lambda-powertools`** — structured JSON logging (all log entries include `request_id`, `cold_start`, `service`), X-Ray tracing decorators.
@@ -269,11 +256,11 @@ Five tables, all in on-demand (pay-per-request) billing mode with point-in-time 
 
 | Table | Primary key | Purpose |
 |-------|------------|---------|
-| `EntraVerifiedID-v2` | `requestId` | Tracks the state of every presentation/issuance request |
-| `VerifiedIDSamlApps-v2` | `appId` | Stores SAML service provider configurations |
-| `EntraVerifiedIDSystemConfig-v2` | `pk` + `sk` | All non-secret runtime configuration |
-| `EntraVerifiedIDAdminUsers-v2` | `username` | Admin console user accounts and MFA state |
-| `EntraVerifiedIDAuditLog-v2` | `pk` + `sk` | Immutable audit trail (90-day TTL) |
+| `EntraVerifiedID-{stage}` | `requestId` | Tracks the state of every presentation/issuance request |
+| `VerifiedIDSamlApps-{stage}` | `appId` | Stores SAML service provider configurations |
+| `EntraVerifiedIDSystemConfig-{stage}` | `pk` + `sk` | All non-secret runtime configuration |
+| `EntraVerifiedIDAdminUsers-{stage}` | `username` | Admin console user accounts and MFA state |
+| `EntraVerifiedIDAuditLog-{stage}` | `pk` + `sk` | Immutable audit trail (90-day TTL) |
 
 The **state table** is the heart of the auth flow: `login_start` writes a pending record, `login_callback` updates it to `success` using a conditional write (idempotency), and `login_status` atomically transitions it to `claimed` on first read. DynamoDB's conditional expressions make these atomic without any application-level locking.
 
@@ -289,9 +276,9 @@ Three secrets:
 
 | Secret | Contents | Lifecycle |
 |--------|----------|-----------|
-| `EntraVerifiedID/v2/app` | Entra client ID/secret, callback secret, RSA signing key | Written by admin setup wizard |
-| `EntraVerifiedID/v2/bootstrap-admin` | One-time admin password | Auto-generated by CDK; consumed once |
-| `EntraVerifiedID/v2/jwt-signing-key` | HMAC-SHA256 key for admin session JWTs | Auto-generated by CDK |
+| `EntraVerifiedID/{stage}/app` | Entra client ID/secret, callback secret, RSA signing key | Written by admin setup wizard |
+| `EntraVerifiedID/{stage}/bootstrap-admin` | One-time admin password | Auto-generated by CDK; consumed once |
+| `EntraVerifiedID/{stage}/jwt-signing-key` | HMAC-SHA256 key for admin session JWTs | Auto-generated by CDK |
 
 Lambda functions retrieve secrets via the **Lambda Extensions Secrets Manager sidecar** (a local HTTP server on port 2773) rather than calling the Secrets Manager API directly. The sidecar caches the secret in the Lambda sandbox, eliminating a network call on warm invocations. A 5-minute TTL in the Lambda code on top of the sidecar cache means at most one sidecar call per 5 minutes per sandbox.
 
@@ -307,8 +294,8 @@ Two private buckets:
 
 | Bucket | Contents | Accessed by |
 |--------|----------|-------------|
-| `entra-vid-hosting-{account}-v2` | JWKS, OIDC discovery doc, DID document | Lambda (`saml_idp` reads JWKS to get the signing cert); also mirrored to well-known bucket |
-| `entra-vid-well-known-{account}-v2` | Same JWKS/DID/OIDC documents | CloudFront OAC → served at `/.well-known/*` |
+| `entra-vid-hosting-{account}-{stage}` | JWKS, OIDC discovery doc, DID document | Lambda (`saml_idp` reads JWKS to get the signing cert); also mirrored to well-known bucket |
+| `entra-vid-well-known-{account}-{stage}` | Same JWKS/DID/OIDC documents | CloudFront OAC → served at `/.well-known/*` |
 
 Both buckets have public access fully blocked. The well-known bucket is accessed by CloudFront using OAC (Origin Access Control), which grants CloudFront permission via a bucket policy without any public endpoint. Versioning is enabled on the hosting bucket for key rotation rollback safety.
 
@@ -338,14 +325,14 @@ All Lambda functions write structured JSON logs via `aws-lambda-powertools.Logge
 
 | Log group | Source |
 |-----------|--------|
-| `/aws/lambda/EntraVerifiedID-LoginStart-v2` | login_start Lambda |
-| `/aws/lambda/EntraVerifiedID-LoginCallback-v2` | login_callback Lambda |
-| `/aws/lambda/EntraVerifiedID-LoginStatus-v2` | login_status Lambda |
-| `/aws/lambda/EntraVerifiedID-IssueStart-v2` | issue_start Lambda |
-| `/aws/lambda/EntraVerifiedID-IssueCallback-v2` | issue_callback Lambda |
-| `/aws/lambda/EntraVerifiedID-SamlIdp-v2` | saml_idp Lambda |
-| `/ecs/entra-vid-frontend-v2` | Frontend Fargate tasks |
-| `/ecs/entra-vid-admin-v2` | Admin Fargate tasks |
+| `/aws/lambda/EntraVerifiedID-LoginStart-{stage}` | login_start Lambda |
+| `/aws/lambda/EntraVerifiedID-LoginCallback-{stage}` | login_callback Lambda |
+| `/aws/lambda/EntraVerifiedID-LoginStatus-{stage}` | login_status Lambda |
+| `/aws/lambda/EntraVerifiedID-IssueStart-{stage}` | issue_start Lambda |
+| `/aws/lambda/EntraVerifiedID-IssueCallback-{stage}` | issue_callback Lambda |
+| `/aws/lambda/EntraVerifiedID-SamlIdp-{stage}` | saml_idp Lambda |
+| `/ecs/entra-vid-frontend-{stage}` | Frontend Fargate tasks |
+| `/ecs/entra-vid-admin-{stage}` | Admin Fargate tasks |
 
 ---
 
@@ -392,7 +379,7 @@ When a custom domain is configured, CDK can create CNAME records pointing `api.{
 | **ECS Fargate** | Serverless container runtime | 2 services (frontend + admin) |
 | **ALB** | Layer 7 load balancer | 2 internal ALBs |
 | **WAF** | HTTP firewall / IP allowlist | Admin ALB only |
-| **API Gateway** | Managed HTTP API router | `EntraVerifiedID-v2` HTTP API |
+| **API Gateway** | Managed HTTP API router | `EntraVerifiedID-{stage}` HTTP API |
 | **Lambda** | Serverless function compute | 6 functions (Python 3.12) |
 | **Lambda Layer** | Shared library package | `cryptography`, `lxml`, `powertools` |
 | **DynamoDB** | Serverless NoSQL database | 5 tables |
@@ -408,19 +395,19 @@ When a custom domain is configured, CDK can create CNAME records pointing `api.{
 
 ## 4. CDK Stack Breakdown
 
-The v2 deployment is split into five CDK stacks. They must be deployed in dependency order; CDK handles this automatically.
+The deployment is split into five CDK stacks. They must be deployed in dependency order; CDK handles this automatically.
 
 ```
-EntraVid-Data-v2
-    └── EntraVid-Layers-v2
-            └── EntraVid-MainApp-v2
-                    ├── EntraVid-PublicFrontend-v2
-                    └── EntraVid-Admin-v2
+EntraVid-Data-{stage}
+    └── EntraVid-Layers-{stage}
+            └── EntraVid-MainApp-{stage}
+                    ├── EntraVid-PublicFrontend-{stage}
+                    └── EntraVid-Admin-{stage}
 ```
 
-### 4.1 Data Stack (`EntraVid-Data-v2`)
+### 4.1 Data Stack (`EntraVid-Data-{stage}`)
 
-**File:** `v2/lib/data-stack.ts`
+**File:** `lib/data-stack.ts`
 
 Creates all stateful resources. All DynamoDB tables use `RETAIN` removal policy — they survive `cdk destroy`.
 
@@ -446,20 +433,20 @@ const commonTableProps: Partial<dynamodb.TableProps> = {
 | `JwtSigningSecret` | Secrets Manager | `EntraVerifiedID/{stage}/jwt-signing-key` | 64-char HMAC key, auto-generated |
 | `HostingBucket` | S3 | `entra-vid-hosting-{account}-{stage}` | Private, versioned, SSL-enforced |
 
-### 4.2 Layers Stack (`EntraVid-Layers-v2`)
+### 4.2 Layers Stack (`EntraVid-Layers-{stage}`)
 
-**File:** `v2/lib/layers-stack.ts`
+**File:** `lib/layers-stack.ts`
 
-Builds a Lambda layer from a Docker image (`v2/layer/Dockerfile`) containing:
+Builds a Lambda layer from a Docker image (`layer/Dockerfile`) containing:
 - `cryptography` — RSA key generation, RSA signing, X.509 certificates
 - `lxml` — XML parsing and exclusive C14N for SAML assertion signing
 - `aws-lambda-powertools` — structured logging, tracing, middleware
 
 The layer is built using CDK's `DockerImageCode` so it is always current with library versions pinned in `requirements.txt`.
 
-### 4.3 Main App Stack (`EntraVid-MainApp-v2`)
+### 4.3 Main App Stack (`EntraVid-MainApp-{stage}`)
 
-**File:** `v2/lib/main-app-stack.ts`
+**File:** `lib/main-app-stack.ts`
 
 Contains all Lambda functions and the API Gateway HTTP API. All six functions share a single IAM execution role (`EntraVerifiedID-Lambda-{stage}`) with least-privilege grants:
 
@@ -507,9 +494,9 @@ httpApi.addStage('DefaultStage', {
 });
 ```
 
-### 4.4 Public Frontend Stack (`EntraVid-PublicFrontend-v2`)
+### 4.4 Public Frontend Stack (`EntraVid-PublicFrontend-{stage}`)
 
-**File:** `v2/lib/public-frontend-stack.ts`
+**File:** `lib/public-frontend-stack.ts`
 
 Builds a React SPA Docker image and deploys it to ECS Fargate behind an **internal** ALB. CloudFront sits in front with a VPC Origin pointing at the ALB. No internet-facing ALB exists.
 
@@ -518,9 +505,9 @@ Key design decisions:
 - Fargate tasks run in private subnets with `assignPublicIp: true` — this is because the frontend VPC (`{frontend-vpc-id}`) has an IGW, which is required for the CloudFront VPC Origin feature
 - A second S3 bucket (`WellKnownBucket`) is created in this stack and connected to CloudFront via OAC for serving `/.well-known/*` documents (JWKS, DID, OIDC discovery)
 
-### 4.5 Admin Stack (`EntraVid-Admin-v2`)
+### 4.5 Admin Stack (`EntraVid-Admin-{stage}`)
 
-**File:** `v2/lib/admin-stack.ts`
+**File:** `lib/admin-stack.ts`
 
 Deploys the FastAPI admin console to ECS Fargate in the admin VPC (`{admin-vpc-id}`). An AWS WAF Web ACL with an IP allowlist (internal network CIDR) guards the internal ALB — no request reaches the container without first passing WAF.
 
@@ -586,7 +573,7 @@ All Lambda functions follow a consistent pattern:
 
 ### 6.1 `login_start` — `POST /api/login/start`
 
-**File:** `v2/lambdas/login_start/handler.py`  
+**File:** `lambdas/login_start/handler.py`  
 **Memory:** 256 MB | **Timeout:** 30 s | **Architecture:** x86_64
 
 **Responsibilities:**
@@ -698,7 +685,7 @@ def _store_pending_request(request_id: str) -> None:
 
 ### 6.2 `login_callback` — `POST /api/login/callback`
 
-**File:** `v2/lambdas/login_callback/handler.py`  
+**File:** `lambdas/login_callback/handler.py`  
 **Memory:** 256 MB | **Timeout:** 30 s
 
 This is the Entra Verified ID webhook receiver. Entra calls this endpoint after the user presents their credential in Authenticator.
@@ -751,7 +738,7 @@ pending → failed     (requestStatus = "presentation_error")
 
 ### 6.3 `login_status` — `GET /api/login/status/{requestId}`
 
-**File:** `v2/lambdas/login_status/handler.py`  
+**File:** `lambdas/login_status/handler.py`  
 **Memory:** 256 MB | **Timeout:** 30 s
 
 Polled by the browser every 2 seconds. Returns status and, on first successful poll, the VC claims.
@@ -797,7 +784,7 @@ failed           │  200 { status: "failed", failureReason }
 
 ### 6.4 `issue_start` — `POST /api/issue/start`
 
-**File:** `v2/lambdas/issue_start/handler.py`  
+**File:** `lambdas/issue_start/handler.py`  
 **Memory:** 256 MB | **Timeout:** 30 s
 
 Mirrors `login_start` but calls `createIssuanceRequest` instead of `createPresentationRequest`. The Entra VerifiedEmployee manifest URL is read from `SystemConfig` (key: `manifest_url`).
@@ -813,7 +800,7 @@ The `login_status` handler passes `request_retrieved` and `issuance_successful` 
 
 ### 6.5 `issue_callback` — `POST /api/issue/callback`
 
-**File:** `v2/lambdas/issue_callback/handler.py`
+**File:** `lambdas/issue_callback/handler.py`
 
 Same validation logic as `login_callback` (constant-time key check, idempotency guard). Handles three status values:
 
@@ -827,7 +814,7 @@ Same validation logic as `login_callback` (constant-time key check, idempotency 
 
 ### 6.6 `saml_idp` — `GET|POST /api/saml/*`
 
-**File:** `v2/lambdas/saml_idp/handler.py`  
+**File:** `lambdas/saml_idp/handler.py`  
 **Memory:** 512 MB | **Timeout:** 30 s | **Layer:** cryptography + lxml
 
 Implements a full SAML 2.0 Identity Provider. This is the most complex Lambda in the system.
@@ -1116,7 +1103,7 @@ The wizard collects all required values in a single guided flow and validates th
 
 ## 10. API Gateway Routes
 
-**API Name:** `EntraVerifiedID-v2`  
+**API Name:** `EntraVerifiedID-{stage}`  
 **Type:** HTTP API (not REST API)  
 **Stage:** `$default` (auto-deploy enabled)  
 **Throttle:** 100 requests/second sustained, 200 burst  
@@ -1513,8 +1500,8 @@ npm install -g aws-cdk
 # 1. Authenticate
 aws sso login --profile your-profile
 
-# 2. Navigate to v2
-cd "v2"
+# 2. Navigate to the project directory
+cd entra-verified-id
 
 # 3. Install CDK dependencies
 npm install
@@ -1554,17 +1541,17 @@ CDK resolves dependencies automatically, but for manual deploys:
 npx cdk deploy --all --require-approval never
 
 # Or one at a time in order:
-npx cdk deploy EntraVid-Data-v2
-npx cdk deploy EntraVid-Layers-v2
-npx cdk deploy EntraVid-MainApp-v2
-npx cdk deploy EntraVid-PublicFrontend-v2
-npx cdk deploy EntraVid-Admin-v2
+npx cdk deploy EntraVid-Data-{stage}
+npx cdk deploy EntraVid-Layers-{stage}
+npx cdk deploy EntraVid-MainApp-{stage}
+npx cdk deploy EntraVid-PublicFrontend-{stage}
+npx cdk deploy EntraVid-Admin-{stage}
 ```
 
 ### Post-Deploy: Onboarding Wizard
 
 1. Connect to the internal network (office via Direct Connect, site-to-site VPN, or client VPN)
-2. Retrieve bootstrap credentials: `aws secretsmanager get-secret-value --secret-id EntraVerifiedID/v2/bootstrap-admin`
+2. Retrieve bootstrap credentials: `aws secretsmanager get-secret-value --secret-id EntraVerifiedID/{stage}/bootstrap-admin`
 3. Navigate to the admin console URL
 4. Log in with bootstrap credentials
 5. Complete the onboarding wizard:
@@ -1582,7 +1569,7 @@ npx cdk deploy EntraVid-Admin-v2
 After changing Lambda function code:
 
 ```bash
-npx cdk deploy EntraVid-MainApp-v2 --require-approval never --profile your-profile
+npx cdk deploy EntraVid-MainApp-{stage} --require-approval never --profile your-profile
 ```
 
 CDK automatically builds a new deployment package (using `aws-lambda-python-alpha`'s Docker-based bundler) and updates the function.
@@ -1591,8 +1578,8 @@ CDK automatically builds a new deployment package (using `aws-lambda-python-alph
 
 ```bash
 # Force a new ECS deployment after CDK deploys the new image
-npx cdk deploy EntraVid-PublicFrontend-v2 --require-approval never
-npx cdk deploy EntraVid-Admin-v2 --require-approval never
+npx cdk deploy EntraVid-PublicFrontend-{stage} --require-approval never
+npx cdk deploy EntraVid-Admin-{stage} --require-approval never
 ```
 
 CDK builds new Docker images, pushes to ECR, and triggers a rolling ECS deployment (no downtime with 2 desired tasks).
@@ -1615,14 +1602,14 @@ npx cdk destroy --all
 
 | Variable | Set by | Example |
 |----------|--------|---------|
-| `STATE_TABLE` | CDK | `EntraVerifiedID-v2` |
-| `APP_TABLE` | CDK | `VerifiedIDSamlApps-v2` |
-| `SYSTEM_CONFIG_TABLE` | CDK | `EntraVerifiedIDSystemConfig-v2` |
-| `SECRET_NAME` | CDK | `EntraVerifiedID/v2/app` |
-| `HOSTING_BUCKET` | CDK | `entra-vid-hosting-{aws-account-id}-v2` |
-| `STAGE` | CDK | `v2` |
+| `STATE_TABLE` | CDK | `EntraVerifiedID-{stage}` |
+| `APP_TABLE` | CDK | `VerifiedIDSamlApps-{stage}` |
+| `SYSTEM_CONFIG_TABLE` | CDK | `EntraVerifiedIDSystemConfig-{stage}` |
+| `SECRET_NAME` | CDK | `EntraVerifiedID/{stage}/app` |
+| `HOSTING_BUCKET` | CDK | `entra-vid-hosting-{aws-account-id}-{stage}` |
+| `STAGE` | CDK | `{stage}` |
 | `LOG_LEVEL` | CDK | `INFO` |
-| `POWERTOOLS_SERVICE_NAME` | CDK | `EntraVerifiedID-v2` |
+| `POWERTOOLS_SERVICE_NAME` | CDK | `EntraVerifiedID-{stage}` |
 | `AWS_REGION` | Lambda runtime | `{aws-region}` |
 | `AWS_SESSION_TOKEN` | Lambda runtime | (used by Secrets Manager sidecar) |
 
@@ -1630,21 +1617,21 @@ npx cdk destroy --all
 
 | Log group | Lambda / Service |
 |-----------|-----------------|
-| `/aws/lambda/EntraVerifiedID-LoginStart-v2` | login_start |
-| `/aws/lambda/EntraVerifiedID-LoginCallback-v2` | login_callback |
-| `/aws/lambda/EntraVerifiedID-LoginStatus-v2` | login_status |
-| `/aws/lambda/EntraVerifiedID-IssueStart-v2` | issue_start |
-| `/aws/lambda/EntraVerifiedID-IssueCallback-v2` | issue_callback |
-| `/aws/lambda/EntraVerifiedID-SamlIdp-v2` | saml_idp |
-| `/ecs/entra-vid-frontend-v2` | Frontend Fargate |
-| `/ecs/entra-vid-admin-v2` | Admin Fargate |
+| `/aws/lambda/EntraVerifiedID-LoginStart-{stage}` | login_start |
+| `/aws/lambda/EntraVerifiedID-LoginCallback-{stage}` | login_callback |
+| `/aws/lambda/EntraVerifiedID-LoginStatus-{stage}` | login_status |
+| `/aws/lambda/EntraVerifiedID-IssueStart-{stage}` | issue_start |
+| `/aws/lambda/EntraVerifiedID-IssueCallback-{stage}` | issue_callback |
+| `/aws/lambda/EntraVerifiedID-SamlIdp-{stage}` | saml_idp |
+| `/ecs/entra-vid-frontend-{stage}` | Frontend Fargate |
+| `/ecs/entra-vid-admin-{stage}` | Admin Fargate |
 
 ### Key Operational Queries
 
 **Find a failed login by requestId:**
 ```bash
 aws dynamodb get-item \
-  --table-name EntraVerifiedID-v2 \
+  --table-name EntraVerifiedID-{stage} \
   --key '{"requestId": {"S": "550e8400-e29b-41d4-a716-446655440000"}}'
 ```
 
@@ -1658,7 +1645,7 @@ aws cloudfront create-invalidation \
 **Force a new ECS deployment (pick up config change):**
 ```bash
 aws ecs update-service \
-  --cluster EntraVid-Frontend-v2 \
+  --cluster EntraVid-Frontend-{stage} \
   --service entra-vid-frontend \
   --force-new-deployment
 ```
