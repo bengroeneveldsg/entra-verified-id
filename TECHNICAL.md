@@ -50,7 +50,7 @@ The system supports three distinct flows:
 
 1. **Direct login** — user visits a login page, scans QR, and receives a session (e.g. for `your-app.example.com`)
 2. **Credential issuance** — user scans QR to add the VerifiedEmployee credential to their Authenticator wallet
-3. **SAML IdP** — SAML-federated apps (Amazon WorkSpaces, Kiro) redirect to this system as an IdP; user scans QR to authenticate
+3. **SAML IdP** — SAML-federated apps (Amazon WorkSpaces Personal and Amazon WorkSpaces Applications) redirect to this system as an IdP; user scans QR to authenticate
 
 ---
 
@@ -1235,7 +1235,7 @@ argon2.PasswordHasher(
 
 ### Overview
 
-The SAML IdP allows SAML-federated applications (Amazon WorkSpaces, Kiro) to use Verified ID QR login instead of Entra password authentication. The IdP is stateless aside from DynamoDB session records.
+The SAML IdP allows SAML-federated applications (Amazon WorkSpaces Personal and Amazon WorkSpaces Applications) to use Verified ID QR login instead of Entra password authentication. The IdP is stateless aside from DynamoDB session records.
 
 ### SAML Binding Support
 
