@@ -116,8 +116,8 @@ User browser
    │  5 tables    │  │  3 secrets       │
    └──────────────┘  └──────────────────┘
 
-Admin path (VPN only):
-   VPN → WAF → Internal ALB (admin VPC) → ECS Fargate (FastAPI + React admin)
+Admin path (internal network only):
+   Internal network → WAF → Internal ALB (admin VPC) → ECS Fargate (FastAPI + React admin)
 ```
 
 ### Request Flow — Login
@@ -187,9 +187,9 @@ Both services use rolling deployments: when a new image is pushed, ECS starts th
 **How we use it:**
 
 - **Frontend ALB** (internal, no public IP) — receives traffic from CloudFront via VPC Origin and forwards it to the Nginx Fargate tasks. Security group allows inbound only from the CloudFront prefix list.
-- **Admin ALB** (internal, no public IP) — receives traffic from the WAF and forwards it to the FastAPI Fargate tasks. Only reachable from within the VPN-connected network.
+- **Admin ALB** (internal, no public IP) — receives traffic from the WAF and forwards it to the FastAPI Fargate tasks. Only reachable from within the corporate internal network (office via Direct Connect, site-to-site VPN, or client VPN).
 
-Both ALBs are HTTP-only at the ALB level (TLS is terminated at CloudFront / VPN boundary). This is intentional for the current deployment; ACM certificates for {aws-region} have not yet been provisioned.
+Both ALBs are HTTP-only at the ALB level (TLS is terminated at CloudFront (for frontend) and at the internal network boundary (for admin)). This is intentional for the current deployment; ACM certificates for {aws-region} have not yet been provisioned.
 
 ---
 
@@ -200,7 +200,7 @@ Both ALBs are HTTP-only at the ALB level (TLS is terminated at CloudFront / VPN 
 **How we use it:**
 
 - Attached to the **admin ALB only**.
-- A single IP allowlist rule restricts access to the VPN CIDR block. Any request from an IP not in that range is blocked with HTTP 403 before it reaches the Fargate container.
+- A single IP allowlist rule restricts access to the corporate internal network CIDR block (covering office networks connected via Direct Connect, site-to-site VPN, or client VPN connections). Any request from an IP not in that range is blocked with HTTP 403 before it reaches the Fargate container.
 - This means the admin console has no public route even though the ALB is technically accessible from within the VPC — the WAF is the network-layer enforcement point.
 
 ---
@@ -380,7 +380,7 @@ When a custom domain is configured, CDK can create CNAME records pointing `api.{
 - **`us-east-1` certificate** — attached to the CloudFront distribution for the custom domain (e.g. `vid.example.com`)
 - **Regional certificate** (`{aws-region}`) — attached to the API Gateway custom domain (`api.vid.example.com`)
 
-> **Current deployment:** No ACM certificates have been provisioned in {aws-region} yet. Both ALBs are HTTP-only; TLS is handled at CloudFront (for frontend) and VPN (for admin).
+> **Current deployment:** No ACM certificates have been provisioned in {aws-region} yet. Both ALBs are HTTP-only; TLS is handled at CloudFront (for frontend) and at the internal network boundary (for admin).
 
 ---
 
@@ -522,10 +522,10 @@ Key design decisions:
 
 **File:** `v2/lib/admin-stack.ts`
 
-Deploys the FastAPI admin console to ECS Fargate in the admin VPC (`{admin-vpc-id}`). An AWS WAF Web ACL with an IP allowlist (VPN CIDR) guards the internal ALB — no request reaches the container without first passing WAF.
+Deploys the FastAPI admin console to ECS Fargate in the admin VPC (`{admin-vpc-id}`). An AWS WAF Web ACL with an IP allowlist (internal network CIDR) guards the internal ALB — no request reaches the container without first passing WAF.
 
 - Fargate tasks use `assignPublicIp: false`; ECR image pulls route through Cloud WAN egress
-- `SECURE_COOKIE=false` is currently set because the admin ALB does not have an ACM cert (HTTP only at ALB level, HTTPS terminated at WAF/VPN boundary)
+- `SECURE_COOKIE=false` is currently set because the admin ALB does not have an ACM cert (HTTP only at ALB level, HTTPS terminated at the internal network boundary)
 
 ---
 
@@ -556,10 +556,10 @@ Internet → CloudFront → [{cloudfront-vpc-origin-prefix-list-id} prefix list]
 **Admin path:**
 
 ```
-VPN → WAF (IP allowlist) → ALB SG → ALB → Fargate SG → Fargate tasks
+Internal network → WAF (IP allowlist) → ALB SG → ALB → Fargate SG → Fargate tasks
 ```
 
-- **ALB SG** (`AdminAlbSg`): ingress TCP/80 from VPN CIDR, TCP/80 from WAF-managed IPs
+- **ALB SG** (`AdminAlbSg`): ingress TCP/80 from internal network CIDR, TCP/80 from WAF-managed IPs
 - **Fargate SG** (`AdminFargateSg`): ingress TCP/8000 from admin ALB SG only
 
 ### CloudFront Distribution
@@ -1201,7 +1201,7 @@ The `url` field in the `login/start` response is an `ms-authenticator://` deep-l
 ### Architecture
 
 ```
-Browser (VPN) → WAF → Internal ALB → ECS Fargate
+Browser (internal network) → WAF → Internal ALB → ECS Fargate
                                        ├── FastAPI backend (:8000)
                                        └── React admin SPA (served by FastAPI static)
 ```
@@ -1413,7 +1413,7 @@ Tokens are not cached between invocations (access tokens are short-lived but var
 | SAML open redirect | Same — ACS URL is not caller-controlled |
 | Admin brute force | Argon2id hashing; 5-attempt lockout (15 min) |
 | Admin credential theft | TOTP MFA required; HttpOnly JWT cookie |
-| Admin network exposure | Internal ALB only; WAF IP allowlist (VPN CIDR) |
+| Admin network exposure | Internal ALB only; WAF IP allowlist (internal network CIDR) |
 | Private key exposure | RSA key in Secrets Manager only; never logged; cached in Lambda memory |
 | Timing attacks | Constant-time comparison for all secret validation |
 | DID spoofing | `validateLinkedDomain: true` in all presentation requests |
@@ -1462,7 +1462,7 @@ The SAML/JWT signing key lifecycle:
   - Frontend VPC: has Internet Gateway attached (required for CloudFront VPC Origin)
   - Admin VPC: has outbound egress for ECR (Cloud WAN or NAT Gateway)
 - Subnets in ≥2 AZs in each VPC
-- VPN CIDR for admin console access
+- Internal network CIDR for admin console access (office via Direct Connect, site-to-site VPN, or client VPN)
 
 ### DNS and TLS
 
@@ -1537,7 +1537,7 @@ FRONTEND_VPC_ID={frontend-vpc-id}
 FRONTEND_SUBNET_IDS=subnet-xxx,subnet-yyy
 ADMIN_VPC_ID={admin-vpc-id}
 ADMIN_SUBNET_IDS=subnet-aaa,subnet-bbb
-VPN_CIDR=10.0.0.0/8
+INTERNAL_NETWORK_CIDR={your-internal-cidr}
 PUBLIC_DOMAIN=vid.example.com
 HOSTED_ZONE_ID=Z...
 CF_CERT_ARN=arn:aws:acm:us-east-1:...
@@ -1563,7 +1563,7 @@ npx cdk deploy EntraVid-Admin-v2
 
 ### Post-Deploy: Onboarding Wizard
 
-1. Connect to VPN
+1. Connect to the internal network (office via Direct Connect, site-to-site VPN, or client VPN)
 2. Retrieve bootstrap credentials: `aws secretsmanager get-secret-value --secret-id EntraVerifiedID/v2/bootstrap-admin`
 3. Navigate to the admin console URL
 4. Log in with bootstrap credentials
@@ -1696,5 +1696,5 @@ Lambda costs are negligible at this scale. Fargate and ALB dominate the bill.
 | QR code displays but verification never completes | Callback URL misconfigured | Check Entra portal callback URL; check `login_callback` CloudWatch logs |
 | `"Request not found or expired"` (404 on status) | DynamoDB TTL expired (>10 min) or wrong requestId | Normal if user waited >10 min; check for clock skew |
 | SAML assertion rejected by SP | Signing cert mismatch | Verify SP has latest IdP metadata; check `kid` in SystemConfig matches JWKS |
-| Admin console unreachable | VPN not connected, or WAF IP allowlist change | Confirm VPN active; check WAF rule IP set |
+| Admin console unreachable | Not on internal network, or WAF IP allowlist change | Confirm internal network connectivity (Direct Connect, site-to-site VPN, or client VPN); check WAF rule IP set |
 | Lambda cold start >5s | Layer not warming; Secrets Manager latency | Check Lambda Extensions sidecar logs; consider provisioned concurrency |
