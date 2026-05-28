@@ -32,7 +32,7 @@ A production-ready AWS deployment that enables **passwordless QR-code authentica
 | **Credential issuance** | A user visits `/issue`, scans a QR code, and receives a VerifiedEmployee credential in Microsoft Authenticator |
 | **Standalone QR login** | Any application can call `/api/login/start` to challenge a user with a QR code and receive their verified claims |
 | **SAML IdP** | Replaces Entra as the identity provider for SAML-federated apps (AppStream, WorkSpaces, etc.) — users scan a QR instead of entering a password |
-| **Admin console** | A VPN-only internal web UI for managing SAML apps, signing keys, sessions, audit logs, and system configuration |
+| **Admin console** | An internal-network-only web UI for managing SAML apps, signing keys, sessions, audit logs, and system configuration |
 
 ---
 
@@ -166,16 +166,16 @@ The solution is built entirely on AWS-managed services — no self-managed infra
 | **Amazon API Gateway (HTTP API)** | 1 API, 6 route groups | The public REST endpoint for all Lambda functions. Routes map directly to each Lambda handler. Throttling limits are set to 100 req/s sustained and 200 burst. CORS is scoped to the public domain in production. An optional custom domain connects via ACM and Route 53. |
 | **Amazon S3** | 2 buckets | Both buckets are fully private with public access blocked. The **hosting bucket** stores `.well-known/` DID and JWKS files, `config.json`, and the SAML signing certificate — written by the admin console, read by Lambdas via IAM. The **well-known bucket** (separate to avoid cross-stack circular dependencies) serves `/.well-known/*` via CloudFront using Origin Access Control (OAC) with SigV4 signing. |
 | **Amazon ECS Fargate** | 2 clusters, 2 services | Runs the two long-lived stateful containers. The **public frontend** cluster serves the Nginx + React SPA (QR login, issue, and SAML screens). The **admin** cluster runs the FastAPI + React admin console. Both run on Fargate in private subnets with 2 desired tasks for availability; neither has a public IP. |
-| **Application Load Balancer** | 2 internal ALBs | Both ALBs are internal (private subnets only). The **frontend ALB** is the origin target for CloudFront's VPC Origin — traffic never traverses the public internet. The **admin ALB** sits behind WAF and is only reachable from the VPN CIDR. Each ALB forwards to its Fargate target group on the container port. |
+| **Application Load Balancer** | 2 internal ALBs | Both ALBs are internal (private subnets only). The **frontend ALB** is the origin target for CloudFront's VPC Origin — traffic never traverses the public internet. The **admin ALB** sits behind WAF and is only reachable from the internal network CIDR (office via Direct Connect, site-to-site VPN, or client VPN). Each ALB forwards to its Fargate target group on the container port. |
 | **Amazon CloudFront** | 1 distribution, 1 OAC | The public edge for the frontend SPA. Connects to the internal frontend ALB via **VPC Origin** — no public ALB or internet gateway rule is needed. Path behaviours direct `/assets/*` and `/.well-known/*` to caching policies while `/api/*` and the SPA root bypass the cache. A CloudFront-managed Origin Access Control (OAC) enforces SigV4 request signing for the S3 well-known origin. |
-| **AWS WAF** | 1 WebACL, 1 IP set | Protects the admin console. The WebACL default action is **BLOCK**; the single allow rule matches the operator-supplied VPN CIDR. The WebACL is associated with the admin ALB so all non-VPN traffic is dropped before reaching Fargate. |
+| **AWS WAF** | 1 WebACL, 1 IP set | Protects the admin console. The WebACL default action is **BLOCK**; the single allow rule matches the operator-supplied internal network CIDR. The WebACL is associated with the admin ALB so all traffic from outside the internal network is dropped before reaching Fargate. |
 | **AWS IAM** | 5 roles | Fine-grained least-privilege roles for every compute resource. The **Lambda execution role** grants `GetItem`/`PutItem`/`UpdateItem` on specific table ARNs and `GetSecretValue` on the app secret only. The **admin task role** has broader DynamoDB read/write, full secret access, and S3 write for the hosting buckets. Separate **task execution roles** handle ECR image pulls and CloudWatch Logs delivery. |
 | **Amazon ECR** | 2 image repositories | CDK builds the admin and frontend Docker images locally during `cdk deploy` and pushes them to CDK-managed ECR repositories. Fargate pulls images from ECR at service launch. |
 | **Amazon CloudWatch Logs** | 2 log groups | Container stdout/stderr for the admin and frontend Fargate services is streamed via the `awslogs` driver. Log groups have a 1-month retention policy. The admin console queries logs directly from the Audit Log page using CloudWatch Logs Insights. Lambda functions log to their default `/aws/lambda/*` log groups. |
 | **AWS X-Ray** | (tracing) | Active tracing is enabled on all Lambda functions. Trace segments are automatically emitted for DynamoDB and Secrets Manager SDK calls, providing end-to-end visibility across the presentation and issuance flows without any code changes. |
 | **AWS Certificate Manager (ACM)** | Referenced, not created | TLS certificates are created by the operator and passed to CDK as ARNs. A **CloudFront certificate** (must be in `us-east-1`) terminates HTTPS at the edge. An optional **regional certificate** covers API Gateway and the admin ALB when custom domains are configured. |
 | **Amazon Route 53** | Up to 3 DNS records | When a hosted zone ID is provided, CDK creates an A alias record for the public domain (→ CloudFront), a CNAME for the API subdomain (→ API Gateway), and an A alias for the admin subdomain (→ admin ALB). Omitting the hosted zone ID skips record creation — useful when DNS is managed in a separate account. |
-| **Amazon VPC / EC2** | 4 security groups | CDK does not create VPCs or subnets — operators supply existing IDs at deploy time. CDK creates security groups to wire the components together: CloudFront prefix list → frontend ALB → Fargate tasks, and VPN CIDR → admin ALB (then WAF-filtered) → admin Fargate tasks. Lambdas run outside the VPC and reach AWS services over IAM-authenticated endpoints. |
+| **Amazon VPC / EC2** | 4 security groups | CDK does not create VPCs or subnets — operators supply existing IDs at deploy time. CDK creates security groups to wire the components together: CloudFront prefix list → frontend ALB → Fargate tasks, and internal network CIDR → admin ALB (then WAF-filtered) → admin Fargate tasks. Lambdas run outside the VPC and reach AWS services over IAM-authenticated endpoints. |
 
 ---
 
@@ -353,7 +353,7 @@ Or use environment variables directly (useful in scripts):
 ```bash
 export AWS_ACCESS_KEY_ID=AKIA...
 export AWS_SECRET_ACCESS_KEY=...
-export AWS_DEFAULT_REGION=ap-southeast-1
+export AWS_DEFAULT_REGION={aws-region}
 
 cd v2
 ./deploy.sh
@@ -370,7 +370,7 @@ Use this if you need to assume a deployment role (common in multi-account setups
 [profile deploy-role]
 role_arn = arn:aws:iam::123456789012:role/DeploymentRole
 source_profile = default   # or another profile with sts:AssumeRole permission
-region = ap-southeast-1
+region = {aws-region}
 
 # Verify role assumption
 aws sts get-caller-identity --profile deploy-role
@@ -432,7 +432,7 @@ cd entra-verified-id/v2
 npm install
 
 export CDK_DEFAULT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-export CDK_DEFAULT_REGION=ap-southeast-1
+export CDK_DEFAULT_REGION={aws-region}
 
 ./deploy.sh --non-interactive   # uses .deploy.env for all parameters
 ```
@@ -453,7 +453,7 @@ The script guides you through:
 1. **Credential verification** — confirms your AWS identity before proceeding
 2. **Frontend VPC** — pick the VPC (must have IGW) and subnets for the public frontend ALB + Fargate
 3. **Admin VPC** — pick the VPC (needs outbound egress for ECR) and subnets for the admin console, or confirm it shares the frontend VPC
-4. **VPN CIDR** — the IP range allowed to reach the admin console
+4. **Internal network CIDR** — the IP range allowed to reach the admin console (covers office networks reachable via Direct Connect, site-to-site VPN, or client VPN)
 5. **Domain** — your public-facing domain (e.g. `vid.yourdomain.com`)
 6. **ACM certificates** — select existing or create new DNS-validated certificates
 7. **CDK bootstrap** — runs automatically if not already bootstrapped in the account/region
@@ -464,14 +464,14 @@ All parameters are saved to `.deploy.env` (gitignored) — subsequent runs use s
 
 ### After the first deploy
 
-Access the admin console from your VPN and complete the **onboarding wizard** (see [Admin Console](#admin-console)). The system is not functional until the wizard is completed — it collects your Entra tenant credentials, DID, domain settings, and generates signing keys.
+Access the admin console from the internal network and complete the **onboarding wizard** (see [Admin Console](#admin-console)). The system is not functional until the wizard is completed — it collects your Entra tenant credentials, DID, domain settings, and generates signing keys.
 
 ### Re-deploying after changes
 
 ```bash
 # Set account and region
 export CDK_DEFAULT_ACCOUNT=<account-id>
-export CDK_DEFAULT_REGION=ap-southeast-1
+export CDK_DEFAULT_REGION={aws-region}
 # Plus your credential method (profile / env vars / instance role)
 
 # Lambda code changes only (fast, no Docker build needed)
@@ -727,7 +727,7 @@ The check **fails closed** — if the Graph API call fails for any reason (netwo
 
 ## Admin Console
 
-Accessible from VPN only (WAF blocks all other traffic). URL is printed by `deploy.sh` after deployment.
+Accessible from the internal network only (WAF blocks all other traffic). URL is printed by `deploy.sh` after deployment.
 
 ### Onboarding wizard
 
@@ -834,8 +834,8 @@ Multi-factor authentication is enforced after the first password change. The adm
 The admin console has no public endpoint:
 
 - The admin ALB is **internal** (private subnets only) — it has no internet-facing listener
-- A **WAF WebACL** is associated with the ALB; the default action is `BLOCK` and only the operator-supplied VPN CIDR is allowed
-- An attacker cannot reach the login page without first being on the corporate VPN or Direct Connect network
+- A **WAF WebACL** is associated with the ALB; the default action is `BLOCK` and only the operator-supplied internal network CIDR is allowed
+- An attacker cannot reach the login page without first being on the internal network (office via Direct Connect, site-to-site VPN, or client VPN)
 
 ### Lambda IAM (least privilege)
 
