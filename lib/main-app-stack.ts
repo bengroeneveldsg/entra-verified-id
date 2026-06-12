@@ -84,7 +84,7 @@ export class MainAppStack extends cdk.Stack {
         entry:         path.join(__dirname, '..', 'lambdas', entry),
         index:         'handler.py',
         handler:       'handler',
-        runtime:       lambda.Runtime.PYTHON_3_12,
+        runtime:       lambda.Runtime.PYTHON_3_13,
         architecture:  lambda.Architecture.X86_64,
         memorySize:    useCrypto ? 512 : 256,
         timeout:       cdk.Duration.seconds(30),

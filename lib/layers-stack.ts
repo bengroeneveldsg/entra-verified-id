@@ -16,12 +16,12 @@ export class LayersStack extends cdk.Stack {
       description: 'Entra Verified ID — Lambda layer: cryptography, lxml, cffi, aws-lambda-powertools',
     });
 
-    // x86_64 layer: cryptography, lxml, cffi, aws-lambda-powertools (Python 3.12)
+    // x86_64 layer: cryptography, lxml, cffi, aws-lambda-powertools (Python 3.13)
     this.cryptoLayer = new lambda.LayerVersion(this, 'CryptoLayer', {
       layerVersionName: `EntraVerifiedID-Crypto-${props.stage}`,
-      description:      'cryptography + lxml + cffi + aws-lambda-powertools (x86_64, Python 3.12)',
+      description:      'cryptography + lxml + cffi + aws-lambda-powertools (x86_64, Python 3.13)',
       compatibleArchitectures: [lambda.Architecture.X86_64],
-      compatibleRuntimes:      [lambda.Runtime.PYTHON_3_12],
+      compatibleRuntimes:      [lambda.Runtime.PYTHON_3_13],
       code: lambda.Code.fromDockerBuild(
         path.join(__dirname, '..', 'layer'),
         { file: 'Dockerfile' },

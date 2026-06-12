@@ -1,7 +1,7 @@
 # =============================================================================
 # Stage 1 — Build the React SPA
 # =============================================================================
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 
 WORKDIR /workspace
 
@@ -31,7 +31,7 @@ RUN npm run build
 # =============================================================================
 # Stage 2 — Serve with Nginx
 # =============================================================================
-FROM nginx:1.27-alpine AS runtime
+FROM nginx:1.28-alpine AS runtime
 
 # Remove the default config
 RUN rm /etc/nginx/conf.d/default.conf

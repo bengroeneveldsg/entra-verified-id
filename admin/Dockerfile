@@ -2,7 +2,7 @@
 # Stage 1: Build React SPA
 # Build context: v2/ root (contains shared-ui/ and admin/)
 # =============================================================================
-FROM node:20-alpine AS web-builder
+FROM node:24-alpine AS web-builder
 
 WORKDIR /workspace
 
@@ -26,7 +26,7 @@ RUN npm run build
 # =============================================================================
 # Stage 2: Python runtime
 # =============================================================================
-FROM python:3.12-slim AS runtime
+FROM python:3.13-slim AS runtime
 
 # curl is required for the ECS health check
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
