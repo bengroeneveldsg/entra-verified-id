@@ -11,7 +11,6 @@ import {
 import { ArrowBack, Edit as EditIcon } from '@mui/icons-material';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { useTheme, alpha } from '@mui/material/styles';
 import { format, parseISO } from 'date-fns';
 import { samlAppsApi, SamlApp, EntraGroup, NAMEID_FORMATS } from '../../api/samlApps';
 import { STATUS_DOT_COLORS } from '../../components/TableStyles';
@@ -92,7 +91,6 @@ const sectionPaperSx = {
 export function SamlAppDetail() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
-  const theme = useTheme();
 
   const { data: app, isLoading, isError, error } = useQuery<SamlApp>({
     queryKey: ['saml-app', appId],
@@ -266,27 +264,6 @@ export function SamlAppDetail() {
       </Paper>
 
       {/* AWS IAM — shown only for legacy apps that still carry the role ARN fields */}
-      {app.roleArn && (
-        <Paper
-          elevation={0}
-          sx={{
-            border: '1px solid',
-            borderColor: alpha(theme.palette.warning.main, 0.15),
-            borderRadius: 2,
-            p: 2.5,
-            mb: 2,
-          }}
-        >
-          <Typography variant="subtitle1" fontWeight={700} mb={1.5}>AWS IAM (legacy)</Typography>
-          <Field label="IAM Role ARN" value={app.roleArn} mono />
-          {app.providerArn && <Field label="SAML Provider ARN" value={app.providerArn} mono />}
-          {app.sessionName && <Field label="Session Name" value={app.sessionName} mono />}
-          {app.sessionDuration != null && (
-            <Field label="Session Duration" value={formatSessionDuration(app.sessionDuration)} />
-          )}
-        </Paper>
-      )}
-
       {/* Access Control */}
       <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 2.5, mb: 2 }}>
         <Typography variant="subtitle1" fontWeight={700} mb={1.5}>Access Control</Typography>

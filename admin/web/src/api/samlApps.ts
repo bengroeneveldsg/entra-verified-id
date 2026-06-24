@@ -18,18 +18,12 @@ export interface SamlApp {
   spEntityId: string;
   acsUrl: string;
   relayState: string;
-  // Legacy AWS fields — may be absent on apps created via the new attribute editor
-  roleArn?: string | null;
-  providerArn?: string | null;
-  sessionName?: string;
-  sessionDuration?: number;
   displayName: string;
   description: string;
   allowedGroupIds: string[];
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
-  // Generic attribute mapping (blank by default on new apps)
   attributes?: SamlAttribute[];
   nameId?: NameIdConfig | null;
 }
