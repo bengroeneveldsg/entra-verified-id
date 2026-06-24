@@ -336,28 +336,48 @@ def _now_and_exp() -> tuple[str, str]:
     )
 
 
+def _xml_escape(s: str) -> str:
+    """Escape XML special characters for element content and double-quoted attribute values."""
+    import xml.sax.saxutils as _sax
+    return _sax.escape(str(s), {'"': "&quot;"})
+
+
+def _resolve_value(spec: dict, claims: dict[str, Any]) -> str:
+    """Return the attribute value for a config spec dict using VID claims."""
+    if spec.get("source") == "static":
+        return str(spec.get("value", ""))
+    return str(claims.get(spec.get("value", ""), ""))
+
+
+
 def _build_assertion(
     assertion_id: str,
     authn_req_id: str,
     name_id: str,
-    attrs: dict[str, str],
+    name_id_format: str,
+    attrs: list[tuple[str, str, str]],
     now_iso: str,
     exp_iso: str,
     entity_id: str,
     sp_entity_id: str = "urn:amazon:webservices",
     acs_url: str = "https://signin.aws.amazon.com/saml",
 ) -> str:
-    """Single-line assertion XML with explicit namespaces for simplified C14N."""
+    """Single-line assertion XML with explicit namespaces for simplified C14N.
+
+    attrs is an ordered list of (name, nameFormat, value) triples.
+    name_id_format is the full NameID Format URI.
+    All user-supplied strings are XML-escaped before embedding.
+    """
     # Use plain AttributeValue with no inline type declarations.
     # AWS SAML does not require xsi:type; stripping it eliminates the
     # xmlns:xs / xmlns:xsi ordering ambiguity that breaks exclusive C14N
     # digest matching during signature verification.
     attr_xml = "".join(
-        f'<saml:Attribute Name="{k}" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri">'
-        f"<saml:AttributeValue>{v}</saml:AttributeValue>"
+        f'<saml:Attribute Name="{_xml_escape(name)}" NameFormat="{_xml_escape(name_fmt)}">'
+        f"<saml:AttributeValue>{_xml_escape(val)}</saml:AttributeValue>"
         f"</saml:Attribute>"
-        for k, v in attrs.items()
-        if v
+        for name, name_fmt, val in attrs
+        if val
     )
     return (
         # xmlns:saml MUST be declared here. Exclusive C14N is applied to the
@@ -365,17 +385,17 @@ def _build_assertion(
         # so xmlns:saml is NOT inherited. C14N adds it to the assertion root,
         # therefore our hashed bytes must include it.
         f'<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="{assertion_id}" IssueInstant="{now_iso}" Version="2.0">'
-        f"<saml:Issuer>{entity_id}</saml:Issuer>"
+        f"<saml:Issuer>{_xml_escape(entity_id)}</saml:Issuer>"
         f"<saml:Subject>"
-        f'<saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">{name_id}</saml:NameID>'
+        f'<saml:NameID Format="{_xml_escape(name_id_format)}">{_xml_escape(name_id)}</saml:NameID>'
         f'<saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">'
         f'<saml:SubjectConfirmationData{" InResponseTo=" + chr(34) + authn_req_id + chr(34) if authn_req_id else ""} '
-        f'NotOnOrAfter="{exp_iso}" Recipient="{acs_url}">'
+        f'NotOnOrAfter="{exp_iso}" Recipient="{_xml_escape(acs_url)}">'
         f"</saml:SubjectConfirmationData>"
         f"</saml:SubjectConfirmation>"
         f"</saml:Subject>"
         f'<saml:Conditions NotBefore="{now_iso}" NotOnOrAfter="{exp_iso}">'
-        f"<saml:AudienceRestriction><saml:Audience>{sp_entity_id}</saml:Audience></saml:AudienceRestriction>"
+        f"<saml:AudienceRestriction><saml:Audience>{_xml_escape(sp_entity_id)}</saml:Audience></saml:AudienceRestriction>"
         f"</saml:Conditions>"
         f'<saml:AuthnStatement AuthnInstant="{now_iso}">'
         f"<saml:AuthnContext><saml:AuthnContextClassRef>"
@@ -585,13 +605,13 @@ def _handle_sso(event: dict[str, Any]) -> dict[str, Any]:
                 "acs_url": cfg.get("acsUrl", _DEFAULT_APP["acsUrl"]),
                 "relay_state": relay_state or cfg.get("relayState", ""),
                 "sp_entity_id": cfg.get("spEntityId", _DEFAULT_APP["spEntityId"]),
-                "role_arn": cfg.get("roleArn", ""),
-                "provider_arn": cfg.get("providerArn", ""),
-                "session_name": cfg.get("sessionName", _DEFAULT_APP["sessionName"]),
-                "session_duration": cfg.get(
-                    "sessionDuration", _DEFAULT_APP["sessionDuration"]
-                ),
                 "allowed_group_ids": cfg.get("allowedGroupIds", []),
+                "attributes": cfg.get("attributes", []),
+                "name_id_config": cfg.get("nameId") or {
+                    "format": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+                    "source": "claim",
+                    "value": "mail",
+                },
                 "createdAt": now,
                 "ttl": now + _TTL_SECONDS,
             }
@@ -651,15 +671,26 @@ def _handle_complete(event: dict[str, Any]) -> dict[str, Any]:
     if vid_status not in ("claimed", "success"):
         return _json_response(202, {"status": "pending"})
 
-    # ── 3. Extract claims ─────────────────────────────────────────────────────
+    # ── 3. Extract claims and resolve NameID ──────────────────────────────────
     claims: dict[str, Any] = vid_item.get("claims", {})
-    raw_id: str = (
-        claims.get("mail")
-        or claims.get("userPrincipalName")
-        or claims.get("email")
-        or "unknown@unknown"
-    )
-    name_id: str = raw_id
+
+    nid_cfg: dict = session.get("name_id_config") or {
+        "format": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+        "source": "claim",
+        "value": "mail",
+    }
+    name_id = _resolve_value(nid_cfg, claims)
+    name_id_format: str = str(nid_cfg.get(
+        "format", "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+    ))
+    if not name_id:
+        # Empty resolved value — never emit a blank <NameID/> which most SPs reject.
+        name_id = (
+            claims.get("mail")
+            or claims.get("userPrincipalName")
+            or claims.get("email")
+            or "unknown@unknown"
+        )
 
     # ── Group access check ────────────────────────────────────────────────────
     allowed_group_ids: list[str] = session.get("allowed_group_ids", [])
@@ -697,18 +728,15 @@ def _handle_complete(event: dict[str, Any]) -> dict[str, Any]:
 
     sess_acs_url = session.get("acs_url", _DEFAULT_APP["acsUrl"])
     sess_sp_entity_id = session.get("sp_entity_id", _DEFAULT_APP["spEntityId"])
-    sess_role_arn = session.get("role_arn", "")
-    sess_provider_arn = session.get("provider_arn", "")
-    sess_session_name = session.get("session_name", _DEFAULT_APP["sessionName"])
-    sess_duration = session.get("session_duration", _DEFAULT_APP["sessionDuration"])
 
-    saml_attrs = {
-        "https://aws.amazon.com/SAML/Attributes/RoleSessionName": sess_session_name,
-        "https://aws.amazon.com/SAML/Attributes/Role": (
-            f"{sess_role_arn},{sess_provider_arn}"
-        ),
-        "https://aws.amazon.com/SAML/Attributes/SessionDuration": sess_duration,
-    }
+    saml_attrs: list[tuple[str, str, str]] = [
+        (
+            str(attr.get("name", "")),
+            str(attr.get("nameFormat", "urn:oasis:names:tc:SAML:2.0:attrname-format:uri")),
+            _resolve_value(attr, claims),
+        )
+        for attr in session.get("attributes", [])
+    ]
 
     logger.info(
         "Building SAML assertion",
@@ -737,6 +765,7 @@ def _handle_complete(event: dict[str, Any]) -> dict[str, Any]:
             assertion_id,
             authn_req_id,
             name_id,
+            name_id_format,
             saml_attrs,
             now_iso,
             exp_iso,
@@ -804,6 +833,7 @@ def _handle_initiate(event: dict[str, Any]) -> dict[str, Any]:
 
     session_id = str(uuid.uuid4())
     now = int(time.time())
+
     _dynamodb.Table(_STATE_TABLE).put_item(
         Item={
             "requestId": session_id,
@@ -814,11 +844,13 @@ def _handle_initiate(event: dict[str, Any]) -> dict[str, Any]:
             "acs_url": cfg.get("acsUrl", _DEFAULT_APP["acsUrl"]),
             "relay_state": cfg.get("relayState", ""),
             "sp_entity_id": cfg.get("spEntityId", _DEFAULT_APP["spEntityId"]),
-            "role_arn": cfg.get("roleArn", ""),
-            "provider_arn": cfg.get("providerArn", ""),
-            "session_name": cfg.get("sessionName", _DEFAULT_APP["sessionName"]),
-            "session_duration": cfg.get("sessionDuration", _DEFAULT_APP["sessionDuration"]),
             "allowed_group_ids": cfg.get("allowedGroupIds", []),
+            "attributes": cfg.get("attributes", []),
+            "name_id_config": cfg.get("nameId") or {
+                "format": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+                "source": "claim",
+                "value": "mail",
+            },
             "createdAt": now,
             "ttl": now + _TTL_SECONDS,
         }

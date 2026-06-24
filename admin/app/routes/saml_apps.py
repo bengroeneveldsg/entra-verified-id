@@ -176,21 +176,13 @@ async def create_app(
     now = datetime.now(timezone.utc).isoformat()
     app_id = str(uuid.uuid4())
 
-    item = {
-        "appId": app_id,
-        "spEntityId": req.spEntityId,
-        "acsUrl": req.acsUrl,
-        "relayState": req.relayState,
-        "roleArn": req.roleArn,
-        "providerArn": req.providerArn,
-        "sessionName": req.sessionName,
-        "sessionDuration": req.sessionDuration,
-        "displayName": req.displayName,
-        "allowedGroupIds": req.allowedGroupIds,
-        "enabled": True,
-        "createdAt": now,
-        "updatedAt": now,
-    }
+    # model_dump serialises nested SamlAttribute / NameIdConfig to plain dicts,
+    # and exclude_none drops roleArn/providerArn/nameId if not supplied.
+    item = req.model_dump(exclude_none=True)
+    item["appId"] = app_id
+    item["enabled"] = True
+    item["createdAt"] = now
+    item["updatedAt"] = now
     table.put_item(Item=item)
     write_audit_log(
         user["username"],

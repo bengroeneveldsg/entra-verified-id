@@ -13,7 +13,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTheme, alpha } from '@mui/material/styles';
 import { format, parseISO } from 'date-fns';
-import { samlAppsApi, SamlApp, EntraGroup } from '../../api/samlApps';
+import { samlAppsApi, SamlApp, EntraGroup, NAMEID_FORMATS } from '../../api/samlApps';
 import { STATUS_DOT_COLORS } from '../../components/TableStyles';
 
 function StatusDot({ enabled }: { enabled: boolean }) {
@@ -182,23 +182,110 @@ export function SamlAppDetail() {
         />
       </Paper>
 
-      {/* AWS IAM */}
-      <Paper
-        elevation={0}
-        sx={{
-          border: '1px solid',
-          borderColor: alpha(theme.palette.warning.main, 0.15),
-          borderRadius: 2,
-          p: 2.5,
-          mb: 2,
-        }}
-      >
-        <Typography variant="subtitle1" fontWeight={700} mb={1.5}>AWS IAM</Typography>
-        <Field label="IAM Role ARN" value={app.roleArn} mono />
-        <Field label="SAML Provider ARN" value={app.providerArn} mono />
-        <Field label="Session Name" value={app.sessionName} mono />
-        <Field label="Session Duration" value={formatSessionDuration(app.sessionDuration)} />
+      {/* Name ID */}
+      <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 2.5, mb: 2 }}>
+        <Typography variant="subtitle1" fontWeight={700} mb={1.5}>Name ID</Typography>
+        {app.nameId ? (
+          <>
+            <Field
+              label="Format"
+              value={
+                <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all' }}>
+                  {NAMEID_FORMATS.find((f) => f.value === app.nameId!.format)?.label ?? app.nameId.format}
+                </Typography>
+              }
+            />
+            <Field
+              label="Source"
+              value={
+                <Chip
+                  label={app.nameId.source === 'claim' ? 'VID Claim' : 'Static'}
+                  size="small"
+                  variant="outlined"
+                  color={app.nameId.source === 'claim' ? 'primary' : 'default'}
+                />
+              }
+            />
+            <Field
+              label="Value"
+              value={app.nameId.value || <Typography variant="body2" color="text.disabled" component="span">—</Typography>}
+              mono={!!app.nameId.value}
+            />
+          </>
+        ) : (
+          <Typography variant="body2" color="text.secondary" fontStyle="italic">
+            Default — emailAddress format, mail claim
+          </Typography>
+        )}
       </Paper>
+
+      {/* Attribute Mapping */}
+      <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 2.5, mb: 2 }}>
+        <Typography variant="subtitle1" fontWeight={700} mb={1.5}>Attribute Mapping</Typography>
+        {!(app.attributes ?? []).length ? (
+          <Typography variant="body2" color="text.secondary" fontStyle="italic">
+            No custom attributes configured — assertion contains NameID only.
+          </Typography>
+        ) : (
+          <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+            {(app.attributes ?? []).map((attr, idx) => (
+              <Box
+                key={idx}
+                sx={{
+                  py: 1.5,
+                  borderBottom: idx < (app.attributes ?? []).length - 1 ? '1px solid' : 'none',
+                  borderColor: 'divider',
+                }}
+              >
+                <Typography
+                  variant="body2"
+                  sx={{ fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all', mb: 0.5 }}
+                >
+                  {attr.name}
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Chip
+                    label={attr.source === 'claim' ? `claim: ${attr.value}` : 'static'}
+                    size="small"
+                    variant="outlined"
+                    color={attr.source === 'claim' ? 'primary' : 'default'}
+                  />
+                  {attr.source === 'static' && (
+                    <Typography
+                      variant="caption"
+                      sx={{ fontFamily: 'monospace', wordBreak: 'break-all', color: 'text.secondary' }}
+                    >
+                      {attr.value}
+                    </Typography>
+                  )}
+                </Box>
+              </Box>
+            ))}
+          </Box>
+        )}
+      </Paper>
+
+      {/* AWS IAM — shown only for legacy apps that still carry the role ARN fields */}
+      {app.roleArn && (
+        <Paper
+          elevation={0}
+          sx={{
+            border: '1px solid',
+            borderColor: alpha(theme.palette.warning.main, 0.15),
+            borderRadius: 2,
+            p: 2.5,
+            mb: 2,
+          }}
+        >
+          <Typography variant="subtitle1" fontWeight={700} mb={1.5}>AWS IAM (legacy)</Typography>
+          <Field label="IAM Role ARN" value={app.roleArn} mono />
+          {app.providerArn && <Field label="SAML Provider ARN" value={app.providerArn} mono />}
+          {app.sessionName && <Field label="Session Name" value={app.sessionName} mono />}
+          {app.sessionDuration != null && (
+            <Field label="Session Duration" value={formatSessionDuration(app.sessionDuration)} />
+          )}
+        </Paper>
+      )}
 
       {/* Access Control */}
       <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 2.5, mb: 2 }}>
