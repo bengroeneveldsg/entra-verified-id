@@ -696,7 +696,16 @@ For landing-page initiated flows (no SP redirect), the browser calls `/api/saml/
 
 **Step 3 — Add the app in the admin console**
 
-Admin console → SAML Applications → Add App. The app tile appears on the public landing page immediately.
+Admin console → SAML Applications → Add App. Enter the SP Entity ID, ACS URL, and display name.
+
+**Step 4 — Configure attributes and NameID**
+
+The SAML assertion is built entirely from the app's **Attribute Mapping** and **Name ID** configuration — nothing is hardcoded.
+
+- **Name ID** — choose the format and which VID claim (or static value) to use as the subject identifier. For Amazon WorkSpaces Personal the format **must** be `persistent` (`urn:oasis:names:tc:SAML:2.0:nameid-format:persistent`) — this causes STS to set `saml:sub_type == persistent`, which is required for `AssumeRoleWithSAML` to succeed.
+- **Attribute Mapping** — add one row per SAML attribute. Use the **"AWS federation preset"** button to auto-populate the three standard AWS attributes (Role, RoleSessionName, SessionDuration) as editable entries; supply your role ARN and provider ARN in the dialog. Each attribute has a `source` toggle — "VID Claim" resolves the value from the verified credential at login time; "Static Value" emits a fixed string.
+
+> The app tile appears on the public landing page immediately after saving.
 
 > **After key rotation:** Re-download IdP metadata and re-upload to your IAM SAML provider. The old certificate will no longer be valid for signature verification.
 

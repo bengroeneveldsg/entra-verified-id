@@ -14,6 +14,7 @@
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0.0 | 2026-05-28 | Ben Groeneveld | Initial release |
+| 1.1.0 | 2026-06-24 | Ben Groeneveld | Per-app configurable SAML attributes and NameID; removed legacy `roleArn`/`providerArn`/`sessionName`/`sessionDuration` fields; updated §7.1 SAML session record, §7.2 SAML Apps Table, §13 assertion structure |
 
 ---
 
@@ -953,7 +954,11 @@ All records expire after 10 minutes unless the TTL is extended. DynamoDB's TTL c
 | `vidRequestId` | String | UUID of the VID presentation request |
 | `status` | String | `pending → vid_verified → complete` |
 | `relayState` | String | Passed through from SP's AuthnRequest |
+| `attributes` | List | Snapshot of `SamlAppsTable.attributes` at session creation (list of `{name, nameFormat, source, value}`) |
+| `name_id_config` | Map | Snapshot of `SamlAppsTable.nameId` at session creation (`{format, source, value}`) |
 | `ttl` | Number | 10-minute expiry |
+
+> The app config is frozen into the session record at `_handle_sso` / `_handle_initiate` time so assertion building at `_handle_complete` reads only the session row — no per-app DynamoDB lookup needed at assertion time, and config changes mid-session do not affect an in-flight authentication.
 
 ### 7.2 SAML Apps Table (`VerifiedIDSamlApps-{stage}`)
 
@@ -966,13 +971,32 @@ All records expire after 10 minutes unless the TTL is extended. DynamoDB's TTL c
 | `description` | String | No | |
 | `spEntityId` | String | Yes | SAML entity ID of the service provider |
 | `acsUrl` | String | Yes | Assertion Consumer Service URL |
-| `relayState` | String | No | Default relay state |
-| `roleArn` | String | Yes (AWS SAML) | IAM role ARN for AWS federation |
-| `providerArn` | String | Yes (AWS SAML) | IAM SAML provider ARN |
-| `sessionName` | String | No | Default: `VerifiedIDSession` |
-| `sessionDuration` | String | No | Seconds, default `43200` (12h) |
-| `allowedGroupIds` | List | No | Entra group object IDs; empty = allow all |
+| `relayState` | String | No | Default relay state passed through to SP |
+| `attributes` | List | No | Ordered list of `{name, nameFormat, source, value}` objects. Each becomes a `<saml:Attribute>` in the assertion. `source` is `"claim"` (resolved from VID credential) or `"static"` (literal string). Empty = NameID-only assertion. |
+| `nameId` | Map | No | `{format, source, value}` — controls `<saml:NameID>`. Defaults to `emailAddress` format, `mail` claim. Set `format` to `...persistent` for WorkSpaces Personal (`saml:sub_type == persistent` required by STS). |
+| `allowedGroupIds` | List | No | Entra group object IDs; empty = allow all verified users |
 | `enabled` | Boolean | No | Default `true` |
+
+**`attributes` item shape:**
+
+```json
+{
+  "name":       "https://aws.amazon.com/SAML/Attributes/Role",
+  "nameFormat": "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+  "source":     "static",
+  "value":      "arn:aws:iam::123456789012:role/MyRole,arn:aws:iam::123456789012:saml-provider/VerifiedID"
+}
+```
+
+**`nameId` shape:**
+
+```json
+{
+  "format": "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+  "source": "claim",
+  "value":  "mail"
+}
+```
 
 ### 7.3 System Config Table (`EntraVerifiedIDSystemConfig-{stage}`)
 
@@ -1248,14 +1272,17 @@ The SAML IdP allows SAML-federated applications (Amazon WorkSpaces Personal and 
 
 ### Assertion Structure
 
-The signed SAML assertion includes:
+The signed SAML assertion structure is determined entirely by the app's `nameId` and `attributes` config in DynamoDB. No attributes are hardcoded. An app with no attributes configured produces a NameID-only assertion; each `attributes` entry produces one `<saml:Attribute>` element.
+
+**Example — AWS federation app (WorkSpaces Personal):**
 
 ```xml
 <saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ...>
   <saml:Issuer>https://vid.example.com/saml</saml:Issuer>
   <ds:Signature>...</ds:Signature>
   <saml:Subject>
-    <saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">
+    <!-- nameId.format = persistent (required by STS for saml:sub_type == persistent) -->
+    <saml:NameID Format="urn:oasis:names:tc:SAML:2.0:nameid-format:persistent">
       john@example.com
     </saml:NameID>
   </saml:Subject>
@@ -1265,22 +1292,24 @@ The signed SAML assertion includes:
     </saml:AudienceRestriction>
   </saml:Conditions>
   <saml:AttributeStatement>
-    <!-- AWS-specific: role ARN + provider ARN -->
-    <saml:Attribute Name="https://aws.amazon.com/SAML/Attributes/Role">
+    <!-- Each element below comes from one entry in the app's attributes list -->
+    <saml:Attribute Name="https://aws.amazon.com/SAML/Attributes/RoleSessionName"
+                    NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri">
+      <saml:AttributeValue>VerifiedIDSession</saml:AttributeValue>
+    </saml:Attribute>
+    <saml:Attribute Name="https://aws.amazon.com/SAML/Attributes/Role"
+                    NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri">
       <saml:AttributeValue>arn:aws:iam::…:role/…,arn:aws:iam::…:saml-provider/…</saml:AttributeValue>
     </saml:Attribute>
-    <saml:Attribute Name="https://aws.amazon.com/SAML/Attributes/RoleSessionName">
-      <saml:AttributeValue>john@example.com</saml:AttributeValue>
+    <saml:Attribute Name="https://aws.amazon.com/SAML/Attributes/SessionDuration"
+                    NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri">
+      <saml:AttributeValue>3600</saml:AttributeValue>
     </saml:Attribute>
-    <saml:Attribute Name="https://aws.amazon.com/SAML/Attributes/SessionDuration">
-      <saml:AttributeValue>43200</saml:AttributeValue>
-    </saml:Attribute>
-    <!-- VC claims passed through -->
-    <saml:Attribute Name="displayName"><saml:AttributeValue>John Doe</saml:AttributeValue></saml:Attribute>
-    <saml:Attribute Name="mail"><saml:AttributeValue>john@example.com</saml:AttributeValue></saml:Attribute>
   </saml:AttributeStatement>
 </saml:Assertion>
 ```
+
+Both `source=claim` (value resolved from VID credential at assertion time) and `source=static` (literal string) attributes are supported. All name and value strings are XML-escaped before insertion.
 
 ### IdP Metadata
 
