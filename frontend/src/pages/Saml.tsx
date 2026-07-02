@@ -80,17 +80,19 @@ function fmtTime(s: number): string {
   return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
 }
 
+declare const __BASE_DOMAIN__: string;
+
 /**
  * Resolve the app ID.
- * Precedence: ?app= URL param → subdomain of example.com → fallback "kiro"
+ * Precedence: ?app= URL param → subdomain of the deployment's PUBLIC_DOMAIN → fallback "kiro"
  */
 function resolveAppId(searchParams: URLSearchParams): string {
   const urlApp = searchParams.get('app');
   if (urlApp) return urlApp;
 
   const hostname = window.location.hostname;
-  const baseDomain = 'example.com';
-  if (hostname.endsWith('.' + baseDomain)) {
+  const baseDomain = typeof __BASE_DOMAIN__ !== 'undefined' ? __BASE_DOMAIN__ : '';
+  if (baseDomain && hostname.endsWith('.' + baseDomain)) {
     return hostname.slice(0, hostname.length - baseDomain.length - 1);
   }
   return 'kiro';

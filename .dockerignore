@@ -3,8 +3,10 @@ node_modules
 cdk.out
 .git
 .deploy.env
+.deploy.env*.bak
 cdk-outputs.json
 cdk.context.json
+cdk.context.json*.bak
 *.md
 
 # Lambda functions not needed in container builds

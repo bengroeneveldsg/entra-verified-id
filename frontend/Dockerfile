@@ -21,9 +21,11 @@ COPY frontend/src/            frontend/src/
 # Install all workspace dependencies from the lockfile
 RUN npm ci --workspace=frontend --include-workspace-root
 
-# Build — API_URL can be passed at image build time via --build-arg
+# Build — API_URL and PUBLIC_DOMAIN can be passed at image build time via --build-arg
 ARG API_URL=""
 ENV API_URL=${API_URL}
+ARG PUBLIC_DOMAIN=""
+ENV PUBLIC_DOMAIN=${PUBLIC_DOMAIN}
 
 WORKDIR /workspace/frontend
 RUN npm run build

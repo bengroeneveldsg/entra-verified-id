@@ -20,5 +20,8 @@ export default defineConfig({
   define: {
     // Injected at build time via env var; falls back to origin at runtime
     __API_BASE__: JSON.stringify(process.env.API_URL ?? ''),
+    // Root public domain for this deployment; used to resolve a SAML app ID
+    // from a subdomain (e.g. "<appId>.<PUBLIC_DOMAIN>"). Never hardcoded.
+    __BASE_DOMAIN__: JSON.stringify(process.env.PUBLIC_DOMAIN ?? ''),
   },
 });

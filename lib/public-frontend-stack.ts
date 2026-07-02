@@ -122,9 +122,10 @@ export class PublicFrontendStack extends cdk.Stack {
     });
 
     const image = new ecr_assets.DockerImageAsset(this, 'FrontendImage', {
-      directory: path.join(__dirname, '..'),
-      file:      'frontend/Dockerfile',
-      platform:  ecr_assets.Platform.LINUX_AMD64,
+      directory:  path.join(__dirname, '..'),
+      file:       'frontend/Dockerfile',
+      platform:   ecr_assets.Platform.LINUX_AMD64,
+      buildArgs:  { PUBLIC_DOMAIN: publicDomain ?? '' },
     });
 
     const logGroup = new logs.LogGroup(this, 'FrontendLogs', {

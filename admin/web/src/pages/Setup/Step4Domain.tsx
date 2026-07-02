@@ -62,7 +62,7 @@ export function Step4Domain({ onNext }: Props) {
       <TextField
         label="Public Domain"
         fullWidth
-        placeholder="example.com"
+        placeholder="vid.example.com"
         error={!!errors.public_domain}
         helperText={errors.public_domain?.message ?? 'Primary domain of your deployment (no protocol)'}
         {...register('public_domain')}
@@ -71,7 +71,7 @@ export function Step4Domain({ onNext }: Props) {
       <TextField
         label="API Domain"
         fullWidth
-        placeholder="api.example.com"
+        placeholder="api.vid.example.com"
         error={!!errors.api_domain}
         helperText={errors.api_domain?.message ?? 'Domain for the backend API'}
         {...register('api_domain')}
@@ -80,7 +80,7 @@ export function Step4Domain({ onNext }: Props) {
       <TextField
         label="Frontend Base URL"
         fullWidth
-        placeholder="https://example.com"
+        placeholder="https://vid.example.com"
         error={!!errors.frontend_base_url}
         helperText={errors.frontend_base_url?.message ?? 'Full URL including protocol of the public frontend'}
         {...register('frontend_base_url')}
